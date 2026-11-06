@@ -61,7 +61,7 @@ serialiser = Numpy("latency_mnist_2l_checkpoints")
 network = SequentialNetwork()
 with network:
     # Populations
-    input = InputLayer(LatencyInput("linear", EXAMPLE_TIME - (2.0 * DT), 2.0 * DT, 1, False),
+    input = InputLayer(LatencyInput("linear", EXAMPLE_TIME - (2.0 * DT), 2.0 * DT, 1),
                        (28, 28, 1), name="input",record_spikes= True)   
     hidden = []
     for nh in range(HIDDEN_LAYERS):

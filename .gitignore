@@ -1,0 +1,12 @@
+# Python virtual environment
+.venv/
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+
+# GeNN generated code
+*_CODE/
+
+# VS Code local settings
+.vscode/
