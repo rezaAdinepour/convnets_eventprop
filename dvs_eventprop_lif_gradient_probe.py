@@ -32,7 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dt-ms", type=float,
-        choices=(1.0, 0.5, 0.25, 0.125, 0.0625), default=1.0,
+        choices=(1.0, 0.5, 0.25, 0.125, 0.0625, 0.0078125),
+        default=1.0,
     )
     args = parser.parse_args()
     dt = args.dt_ms
