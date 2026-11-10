@@ -33,6 +33,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
+    parser.add_argument("--order", choices=("BAC", "ACB"), default="BAC")
     args = parser.parse_args()
 
     reference_path = args.reference.resolve(strict=True)
@@ -93,7 +94,7 @@ def main():
         require(np.isfinite(value).all(), "Nonfinite initial weights")
         require(capacity.array_hash(value) == digest, "Weight hash mismatch")
 
-    order = [1, 0, 2]
+    order = {"BAC": [1, 0, 2], "ACB": [0, 2, 1]}[args.order]
     emit("PREDECESSOR_PLAN", {
         "current": current,
         "reference_git_head": reference["identity"]["convnets_commit"],
@@ -104,7 +105,7 @@ def main():
         "new_order": order,
         "training_parent_order": [rows[i].stable_id for i in order],
         "optimizer_updates": 0,
-        "gradient_order_parity_required": False,
+        "first_example_replay_gradient_parity_required": args.order == "ACB",
     })
 
     result = capacity.run(
@@ -152,12 +153,71 @@ def main():
     np.testing.assert_allclose(actual_scores[-1], 0, rtol=0, atol=1e-7)
     require(result["hidden"][-1] == [], "Hidden spikes in empty drain")
 
+    if args.order == "ACB":
+        baseline = reference["per_example"][0]
+        observed = result["records"][0]
+        require(
+            baseline["index"] == observed["index"] == 0,
+            "Unexpected ownership of A's backward contribution",
+        )
+        np.testing.assert_array_equal(
+            np.asarray(observed["limit"]),
+            np.asarray(baseline["limit"]),
+            err_msg="A's replay limit changed",
+        )
+        require(
+            len(baseline["gradients"]) == len(observed["gradients"]) == 2,
+            "Unexpected gradient projection count",
+        )
+
+        differences = []
+        for projection, size in enumerate((400, 4312)):
+            actual = np.asarray(
+                observed["gradients"][projection], dtype=np.float64
+            ).reshape(-1)
+            expected = np.asarray(
+                baseline["gradients"][projection], dtype=np.float64
+            ).reshape(-1)
+            require(
+                actual.shape == expected.shape == (size,),
+                "Unexpected gradient shape",
+            )
+            require(
+                np.isfinite(actual).all() and np.isfinite(expected).all(),
+                "Nonfinite gradient",
+            )
+            difference = float(np.max(np.abs(actual - expected)))
+            differences.append(difference)
+            emit("SUCCESSOR_REPLAY_GRADIENT", {
+                "backward_example": "A",
+                "reference_forward_successor": "B",
+                "new_forward_successor": "C",
+                "projection": projection,
+                "max_absolute_difference": difference,
+                "replay_limit": observed["limit"].tolist(),
+            })
+            np.testing.assert_allclose(
+                actual, expected, rtol=2e-5, atol=2e-7,
+                err_msg="A's gradient changed with forward successor",
+            )
+
+        emit("PASS_SUCCESSOR_REPLAY_ISOLATION", {
+            "backward_example": "A",
+            "successors_compared": ["B", "C"],
+            "gradient_max_absolute_difference_hidden_output": differences,
+            "weights_and_moments_unchanged": True,
+            "replay_limits_identical": True,
+            "optimizer_updates": 0,
+            "parameter_staleness_tested": False,
+            "eventprop_gradient_correctness_certified": False,
+        })
+
     emit("PASS_PREDECESSOR_FORWARD_CHECK", {
         "max_absolute_score_difference": maximum,
         "real_examples": 3,
         "optimizer_updates": 0,
         "weights_and_moments_unchanged": True,
-        "scope": "ABC versus BAC; frozen B1, dt1ms, 128ms",
+        "scope": f"ABC versus {args.order}; frozen B1, dt1ms, 128ms",
         "hidden_spike_counts_match": True,
         "hidden_spike_id_time_parity_certified": False,
         "gradient_order_parity_certified": False,
