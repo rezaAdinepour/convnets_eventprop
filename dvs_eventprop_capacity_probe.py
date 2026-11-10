@@ -106,7 +106,10 @@ class CaptureAndClear(Callback):
                     "Gradient reset failed")
 
 
-def run(config, capacity, inputs, labels, initial_weights=None):
+def run(
+    config, capacity, inputs, labels, initial_weights=None,
+    *, compiler_class=EventPropCompiler, capture_class=CaptureAndClear,
+):
     network, inp, hid, out = build_model(config, 1)
     layers = [hid, out]
     shapes = [(5, 5, 2, 8), (392, 11)]
@@ -116,7 +119,7 @@ def run(config, capacity, inputs, labels, initial_weights=None):
                 values.reshape(shape).copy()
             )
 
-    cn = EventPropCompiler(
+    cn = compiler_class(
         example_timesteps=128,
         losses="sparse_categorical_crossentropy",
         dt=1.0,
@@ -149,7 +152,7 @@ def run(config, capacity, inputs, labels, initial_weights=None):
     ]
     require(len(learning) == len(zeroing) == 1,
             "Unexpected learning/reset callback structure")
-    capture = CaptureAndClear(layers, hid, out, labels, capacity)
+    capture = capture_class(layers, hid, out, labels, capacity)
     cn.base_train_callbacks[learning[0]] = capture
 
     empty = to_ml_genn(PreprocessedSpikes(
