@@ -6,6 +6,8 @@ Two sequential models: shared Conv2D and explicitly untied Dense.
 
 from pathlib import Path
 
+import argparse
+
 import numpy as np
 from pygenn import SynapseMatrixType
 
@@ -242,9 +244,16 @@ def run(kind, kernel, dense):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--overlap-weight", type=float, choices=(0.0, 0.1), default=0.0
+    )
+    args = parser.parse_args()
+
     require(STEPS * DT == 128.0, "Physical horizon mismatch")
     kernel = np.zeros(25, dtype=np.float32)
     kernel[0] = 7.0
+    kernel[4] = args.overlap_weight
     dense, mapping = reference.explicit_dense(kernel)
     dense = dense.astype(np.float32)
     mapping = np.asarray(mapping, dtype=np.int64)
@@ -263,11 +272,61 @@ def main():
         "physical_horizon_ms": 128.0,
         "tape_capacity": CAPACITY,
         "scope": "tiny synthetic shared-LIF comparison",
+        "overlap_kernel_weight": float(kernel[4]),
+        "effective_input_weights": exact["effective_input_weights"].tolist(),
     })
+
+    if args.overlap_weight != 0.0:
+        require(
+            exact["hidden_spike_times_ms"][0]
+            < exact["hidden_spike_times_ms"][1],
+            "Expected earlier continuous spike from hidden neuron 0",
+        )
+    
+        directions = {}
+        for slot in (0, 4):
+            direction = np.zeros(25, dtype=np.float64)
+            direction[slot] = 1.0
+            directions[f"kernel_{slot}"] = direction
+        directions["coupled_0_4"] = (
+            directions["kernel_0"] + directions["kernel_4"]
+        ) / np.sqrt(2.0)
+
+        base_kernel = kernel.astype(np.float64)
+        for name, direction in directions.items():
+            analytic = float(np.dot(exact["kernel_gradient"], direction))
+            for epsilon in (0.01, 0.003, 0.001):
+                plus = reference.reference(base_kernel + epsilon * direction)
+                minus = reference.reference(base_kernel - epsilon * direction)
+                require(
+                    plus["hidden_spikes"] == minus["hidden_spikes"] == [1, 1],
+                    "Perturbation changed the single-spike regime",
+                )
+                finite_difference = (
+                    plus["ce"] - minus["ce"]
+                ) / (2.0 * epsilon)
+                emit("ASYMMETRIC_REFERENCE_FD", {
+                    "direction": name,
+                    "epsilon": epsilon,
+                    "analytic": analytic,
+                    "finite_difference": finite_difference,
+                    "relative_error": (
+                        abs(finite_difference - analytic)
+                        / max(abs(analytic), 1e-12)
+                    ),
+                })
+                np.testing.assert_allclose(
+                    finite_difference, analytic, rtol=2e-4, atol=1e-9
+                )
 
     conv = run("conv", kernel, dense)
     untied = run("dense", kernel, dense)
     require(conv[1] == untied[1], "Shared/untied hidden spike times differ")
+    if args.overlap_weight != 0.0:
+        require(
+            conv[1][0][1] < conv[1][1][1],
+            "Expected distinct spikes, with hidden neuron 0 earlier",
+        )
     np.testing.assert_allclose(
         conv[0], untied[0], rtol=2e-5, atol=2e-7
     )
@@ -325,6 +384,7 @@ def main():
         "scope": "one synthetic operating point at fine timestep",
         "original_dt1ms_gradient_gate_passed": False,
         "full_dvs_gradient_correctness_certified": False,
+        "overlap_kernel_weight": float(kernel[4]),
     })
 
 
