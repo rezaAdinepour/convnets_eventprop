@@ -61,7 +61,7 @@ def main():
         type=float,
         choices=(
             1.0, 0.0078125, 0.00390625, 0.001953125,
-            0.0009765625, 0.00048828125,
+            0.0009765625, 0.00048828125, 0.0001220703125,
         ),
         default=0.0078125,
     )
@@ -69,6 +69,7 @@ def main():
         "--scalar-precision", choices=("float", "double"), default="float"
     )
     parser.add_argument("--initial-values-from", type=Path)
+    parser.add_argument("--continuous-reference", type=Path)
     parser.add_argument(
         "--allow-initializer-timestep-change", action="store_true"
     )
@@ -164,6 +165,36 @@ def main():
         },
         "nvtx_library_sha256": resource.file_hash(resource.NVTX_LIBRARY),
     }
+    continuous_reference = None
+    reference_source = None
+    if args.continuous_reference is not None:
+        require(args.input_frames == 1024 and args.scalar_precision == "double",
+                "Continuous reference comparison requires the double 1024ms condition")
+        reference_path = args.continuous_reference.resolve(strict=True)
+        continuous_reference = resource.json.loads(reference_path.read_text())
+        require(continuous_reference["selected_finite_difference_gates_passed"] is True,
+                "Continuous reference derivative self-checks did not pass")
+        require(continuous_reference["sample_metadata"] == resource.normalize(metadata),
+                "Continuous reference input/provenance mismatch")
+        for name, key in (
+            ("dvs_eventprop_network_reference.py", "reference_source_sha256"),
+            ("dvs_eventprop_neuron_reference.py", "neuron_reference_sha256"),
+        ):
+            require(resource.file_hash(Path(__file__).with_name(name))
+                    == continuous_reference[key],
+                    f"Continuous reference producer source changed: {name}")
+        for values, size in zip(continuous_reference["gradients"], (400, 4312)):
+            array = np.asarray(values, dtype=np.float64)
+            require(array.shape == (size,) and np.isfinite(array).all()
+                    and np.linalg.norm(array) > 0,
+                    "Invalid continuous reference gradient")
+        require(len(continuous_reference["gradients"]) == 2,
+                "Expected two continuous reference gradients")
+        reference_source = {
+            "path": str(reference_path), "sha256": resource.file_hash(reference_path),
+            "reference_source_sha256": continuous_reference["reference_source_sha256"],
+            "neuron_reference_sha256": continuous_reference["neuron_reference_sha256"],
+        }
     previous = None
     initial_values_source = None
     if args.initial_values_from is not None:
@@ -289,6 +320,7 @@ def main():
             "operation": "import initial numerical values only",
         }
     emit("CANDIDATE_PLAN", {
+        "continuous_reference_source": reference_source,
         "initial_values_source": initial_values_source,
         "identity": identity,
         "condition": condition,
@@ -364,6 +396,12 @@ def main():
 
         initial_state = resource.checkpoint.training_state(cn, layers)
         initial_weights = initial_state[:2]
+        if continuous_reference is not None:
+            require(
+                [resource.capacity.array_hash(w) for w in initial_weights]
+                == continuous_reference["initial_weight_sha256"],
+                "Continuous reference initial weight hashes differ",
+            )
         require(all(value.dtype == scalar_dtype for value in initial_state),
                 "Weight/Adam storage precision differs from requested precision")
 
@@ -485,7 +523,45 @@ def main():
 
     observer.snapshot("after_unload")
     minimum_free = min(s["free_fraction"] for s in observer.snapshots)
+    reference_comparison = None
+    if continuous_reference is not None:
+        reference_counts = np.asarray(continuous_reference["hidden_counts"], dtype=np.float64)
+        reference_scores = np.asarray(continuous_reference["continuous_scores"], dtype=np.float64)
+        require(reference_counts.shape == (392,) and np.isfinite(reference_counts).all()
+                and np.all(reference_counts >= 0)
+                and np.all(reference_counts == np.floor(reference_counts)),
+                "Invalid continuous reference spike counts")
+        require(reference_scores.shape == (11,) and np.isfinite(reference_scores).all(),
+                "Invalid continuous reference scores")
+        projections = []
+        for index, (actual, expected) in enumerate(zip(
+            record["gradients"], continuous_reference["gradients"]
+        )):
+            a = np.asarray(actual, dtype=np.float64).reshape(-1)
+            b = np.asarray(expected, dtype=np.float64)
+            require(a.shape == b.shape, "Reference gradient storage shape mismatch")
+            relative = float(np.linalg.norm(a - b) / np.linalg.norm(b))
+            projections.append({
+                "projection": index, "relative_l2_error_to_continuous": relative,
+                "max_absolute_difference": float(np.max(np.abs(a - b))),
+                "within_1pct": relative <= 0.01,
+            })
+        reference_comparison = {
+            "source": reference_source, "projections": projections,
+            "neurons_with_changed_counts": np.flatnonzero(
+                neuron_counts != reference_counts
+            ).tolist(),
+            "score_max_absolute_difference": float(np.max(np.abs(
+                np.asarray(scores[0]) - reference_scores
+            ))),
+            "decisions_gpu_reference": [int(np.argmax(scores[0])),
+                                        int(np.argmax(reference_scores))],
+            "unclipped_replay": statistics["clipped_jumps"] == 0,
+            "scope": "one frozen example; continuous-reference comparison",
+        }
+        emit("CONTINUOUS_REFERENCE_COMPARISON", reference_comparison)
     result = {
+        "continuous_reference_comparison": reference_comparison,
         "initial_values_source": initial_values_source,
         "initial_weight_dtypes": [str(w.dtype) for w in initial_weights],
         "observed_dtypes": observed_dtypes,
@@ -533,6 +609,13 @@ def main():
     })
     require(minimum_free >= 0.20,
             "Less than 20 percent sampled device memory headroom")
+    if reference_comparison is not None:
+        require(reference_comparison["unclipped_replay"],
+                "Limited gradients cannot pass the unconstrained reference gate")
+        require(not reference_comparison["neurons_with_changed_counts"],
+                "Per-neuron spike counts differ from the continuous reference")
+        require(all(p["within_1pct"] for p in reference_comparison["projections"]),
+                "Continuous reference gradient error exceeds 1 percent")
     emit("PASS_SINGLE_DVS_CANDIDATE", {
         "scope": (
             f"one frozen {args.input_frames}ms DVS example "
