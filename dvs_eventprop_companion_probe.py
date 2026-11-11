@@ -5,7 +5,7 @@ import argparse
 
 import numpy as np
 
-from ml_genn.callbacks import SpikeRecorder
+from ml_genn.callbacks import Callback, SpikeRecorder
 
 import dvs_eventprop_inference_parity_probe as base
 import dvs_eventprop_output_gradient_probe as spike_helper
@@ -23,6 +23,88 @@ from ml_genn.utils.callback_list import CallbackList
 require = base.require
 emit = base.emit
 
+class FirstBatchBackward(Callback):
+    def __init__(self, hid, out, labels, reference):
+        self.layers = [hid, out]
+        self.hid = hid
+        self.out = out
+        self.labels = np.asarray(labels, dtype=np.int64)
+        self.reference = reference
+        self.records = []
+
+    def create_state(self, compiled_network, **kwargs):
+        return compiled_network
+
+    def on_batch_end(self, cn, batch, metric_state):
+        if batch != 1:
+            return
+
+        require(self.reference["index"] == 0, "Expected A's B1 reference")
+        np.testing.assert_array_equal(
+            base.pull(cn.neuron_populations[
+                self.out.population()
+            ].vars["YTrueBack"]).reshape(-1),
+            self.labels,
+        )
+        bounds = base.pull(cn.neuron_populations[
+            self.hid.population()
+        ].vars["LambdavLimit"])
+        np.testing.assert_array_equal(bounds, np.ones_like(bounds))
+        np.testing.assert_array_equal(
+            np.asarray(self.reference["limit"]), [1.0]
+        )
+        require(len(self.reference["gradients"]) == 2,
+                "Expected two reference projections")
+
+        comparisons = []
+        for projection, (layer, size) in enumerate(
+            zip(self.layers, (400, 4312))
+        ):
+            raw = base.pull(cn.connection_populations[
+                layer.connection()
+            ].vars["weightGradient"])
+            require(raw.size == 2 * size,
+                    "Unexpected unreduced B2 gradient size")
+            lanes = raw.reshape(2, size).astype(np.float64)
+            require(np.isfinite(lanes).all(), "Nonfinite lane gradient")
+
+            expected = 0.5 * np.asarray(
+                self.reference["gradients"][projection],
+                dtype=np.float64,
+            ).reshape(-1)
+            require(expected.shape == (size,)
+                    and np.isfinite(expected).all(),
+                    "Invalid B1 reference gradient")
+            difference = float(np.max(np.abs(lanes[0] - expected)))
+
+            comparison = {
+                "projection": projection,
+                "raw_storage_shape": list(raw.shape),
+                "lane_gradient_l2": [
+                    float(np.linalg.norm(lane)) for lane in lanes
+                ],
+                "A_vs_half_B1_max_absolute_difference": difference,
+            }
+            comparisons.append(comparison)
+            emit("FIRST_BATCH_BACKWARD", comparison)
+            np.testing.assert_allclose(
+                lanes[0], expected, rtol=2e-5, atol=2e-7,
+                err_msg="A's B2 lane gradient differs from half its B1 gradient",
+            )
+
+        self.records.append(comparisons)
+        emit("PASS_FIRST_BATCH_BACKWARD_SCALING", {
+            "backward_examples": ["A", "B"],
+            "A_lane": 0,
+            "capture_position": "before GradientBatchReduce",
+            "B1_to_B2_expected_scale": 0.5,
+            "replay_limits": bounds.tolist(),
+            "optimizer_updates": 0,
+            "scope": "A in first B2 batch with real companion B",
+            "arbitrary_batch_companion_independence_certified": False,
+            "exact_gradient_correctness_certified": False,
+        })
+
 
 class RealLaneAccuracy(SparseCategoricalAccuracy):
     def update(self, state, y_true, y_pred, communicator):
@@ -38,7 +120,10 @@ class RealLaneAccuracy(SparseCategoricalAccuracy):
             )
 
 
-def training_forward(cn, inp, hid, out, presentations, layout, labels):
+def training_forward(
+    cn, inp, hid, out, presentations, layout, labels,
+    first_backward_reference=None,
+):
     learning = [
         i for i, callback in enumerate(cn.base_train_callbacks)
         if isinstance(callback, CustomUpdateOnBatchEnd)
@@ -53,8 +138,18 @@ def training_forward(cn, inp, hid, out, presentations, layout, labels):
 
     metric = RealLaneAccuracy()
     state = {out: metric.create_state()}
+    backward = None
+    if first_backward_reference is not None:
+        require(tuple(layout[0]) == (0, 1),
+                "First backward check requires initial batch [A,B]")
+        backward = FirstBatchBackward(
+            hid, out, labels[:2], first_backward_reference
+        )
+
     callbacks = CallbackList(
-        cn.base_train_callbacks + [
+        ([backward] if backward is not None else [])
+        + cn.base_train_callbacks
+        + [
             SpikeRecorder(inp, key="input"),
             SpikeRecorder(hid, key="hidden"),
         ],
@@ -87,6 +182,9 @@ def training_forward(cn, inp, hid, out, presentations, layout, labels):
     callbacks.on_epoch_end(0, state)
     callbacks.on_train_end(state)
     require(state[out].total == 6, "Empty lanes contaminated metric counts")
+    if backward is not None:
+        require(len(backward.records) == 1,
+                "Missing or duplicated first backward capture")
     return np.concatenate(scores, axis=0), callbacks.get_data()
 
 
@@ -97,7 +195,13 @@ def main():
     parser.add_argument(
         "--compiler", choices=("inference", "eventprop"), default="inference"
     )
+    parser.add_argument("--check-first-backward", action="store_true")
     args = parser.parse_args()
+
+    require(
+        not args.check_first_backward or args.compiler == "eventprop",
+        "--check-first-backward requires --compiler eventprop",
+    )
 
     reference_path = args.reference.resolve(strict=True)
     reference = base.json.loads(reference_path.read_text())
@@ -158,6 +262,7 @@ def main():
     presentations = [examples[index] for index in order]
 
     emit("COMPANION_PLAN", {
+        "check_first_backward": args.check_first_backward,
         "current": current,
             "compiler_mode": args.compiler,
         "eventprop_compiler_sha256": base.file_hash(
@@ -229,7 +334,11 @@ def main():
 
         if args.compiler == "eventprop":
             scores, data = training_forward(
-                cn, inp, hid, out, presentations, layout, labels
+                cn, inp, hid, out, presentations, layout, labels,
+                first_backward_reference=(
+                    reference["per_example"][0]
+                    if args.check_first_backward else None
+                ),
             )
         else:
             predictions, data = cn.predict(
