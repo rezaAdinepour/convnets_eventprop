@@ -106,10 +106,147 @@ def self_check():
         )
 
 
+def readout_response(time, horizon):
+    """Continuous weighted LI readout per unit outgoing weight, and d/dtime."""
+    remaining = horizon - time
+    rm, rs = 1.0 / horizon + 1.0 / 20.0, 1.0 / horizon + 1.0 / 5.0
+    integral = -np.expm1(-rm * remaining) / rm + np.expm1(-rs * remaining) / rs
+    derivative_remaining = np.exp(-rm * remaining) - np.exp(-rs * remaining)
+    scale = np.exp(-time / horizon) / (3.0 * horizon)
+    return (float(scale * integral),
+            float(scale * (-integral / horizon - derivative_remaining)))
+
+
+def sensitive_trajectory(jumps, jump_derivatives, horizon):
+    """Fixed-time state sensitivities with exact threshold/reset correction."""
+    v, current, now = 0.0, 0.0, 0.0
+    dimension = len(next(iter(jump_derivatives.values())))
+    zv, zi = np.zeros(dimension), np.zeros(dimension)
+    times, derivatives = [], []
+    for event_time in sorted(set(jumps) | {float(horizon)}):
+        while now < event_time:
+            root = first_crossing(v, current, event_time - now, 80)
+            elapsed = event_time - now if root is None else root
+            require(root is None or root > 1e-12, "Degenerate sensitivity root")
+            em, es = np.exp(-elapsed / 20.0), np.exp(-elapsed / 5.0)
+            zv = zv * em + zi / 3.0 * (em - es)
+            zi = zi * es
+            v, current = advance(v, current, elapsed)
+            now = event_time if root is None else now + elapsed
+            if root is not None:
+                require(abs(v - 1.0) < 1e-10 and current > 1.0,
+                        "Invalid sensitivity threshold crossing")
+                # At threshold: zv + f_minus * dt_spike/dw = 0.
+                dt_dw = -zv / ((current - 1.0) / 20.0)
+                if now < horizon:
+                    times.append(now)
+                    derivatives.append(dt_dw.copy())
+                # Absolute reset has zero voltage Jacobian. Returning to
+                # fixed-time sensitivities gives zv_plus=-f_plus*dt_dw.
+                # Current is continuous through reset, so zi is unchanged.
+                zv = -(current / 20.0) * dt_dw
+                v = 0.0
+                require(len(times) < 10000, "Unexpected sensitivity spike count")
+        current += jumps.get(event_time, 0.0)
+        if event_time in jump_derivatives:
+            zi += jump_derivatives[event_time]
+        require(np.isfinite(zv).all() and np.isfinite(zi).all(),
+                "Nonfinite state sensitivity")
+    return np.asarray(times), np.asarray(derivatives).reshape(-1, dimension)
+
+
+def check_derivatives(jumps, jump_derivatives, horizon, expected_times):
+    # Validate the reset-aware derivative against the earlier independently
+    # derived single-impulse spike-time and readout derivatives first.
+    test_times, test_derivative = sensitive_trajectory(
+        {16.0: 7.0}, {16.0: np.ones(1)}, 128.0
+    )
+    single_exact = single.reference(7.0)
+    np.testing.assert_allclose(test_derivative[0, 0],
+                               single_exact["spike_time_dweight"], rtol=1e-12)
+    np.testing.assert_allclose(
+        readout_response(test_times[0], 128.0),
+        single.readout_response(test_times[0]), rtol=1e-12, atol=1e-15,
+    )
+    times, time_derivatives = sensitive_trajectory(jumps, jump_derivatives, horizon)
+    np.testing.assert_allclose(times, expected_times, rtol=0, atol=1e-9)
+    response = np.array([readout_response(t, horizon) for t in times])
+    require(len(times) > 0, "Derivative check requires spikes")
+    coefficient = float(response[:, 0].sum())
+    coefficient_gradient = response[:, 1] @ time_derivatives
+    emit("CONTINUOUS_READOUT_SENSITIVITY", {
+        "coefficient_per_unit_outgoing_weight": coefficient,
+        "local_kernel_axes": ["kernel_y", "kernel_x", "polarity"],
+        "gradient_shape": [5, 5, 2],
+        "coefficient_gradient": coefficient_gradient.tolist(),
+        "objective": "this neuron's additive weighted-LI readout coefficient",
+        "cross_entropy_gradient": False,
+    })
+    directions = {}
+    for slot in (28, 29):
+        direction = np.zeros(50)
+        direction[slot] = 1.0
+        directions[f"kernel_2_4_{slot - 28}"] = direction
+    directions["coupled_polarities"] = (
+        directions["kernel_2_4_0"] + directions["kernel_2_4_1"]
+    ) / np.sqrt(2.0)
+    all_local = []
+    for name, direction in directions.items():
+        analytic_times = time_derivatives @ direction
+        analytic_coefficient = float(coefficient_gradient @ direction)
+        passed = []
+        for epsilon in (1e-5, 3e-6, 1e-6, 3e-7):
+            perturbed = []
+            for sign in (1.0, -1.0):
+                perturbed_jumps = {
+                    t: value + sign * epsilon * float(jump_derivatives[t] @ direction)
+                    for t, value in jumps.items()
+                }
+                spikes, _ = trajectory(perturbed_jumps, horizon)
+                perturbed.append(np.array([s["time_ms"] for s in spikes]))
+            stable_counts = all(len(t) == len(times) for t in perturbed)
+            fd_coefficient = (
+                sum(readout_response(t, horizon)[0] for t in perturbed[0])
+                - sum(readout_response(t, horizon)[0] for t in perturbed[1])
+            ) / (2.0 * epsilon)
+            time_error = None
+            time_pass = False
+            if stable_counts:
+                fd_times = (perturbed[0] - perturbed[1]) / (2.0 * epsilon)
+                time_error = float(np.max(np.abs(fd_times - analytic_times)))
+                time_pass = bool(np.allclose(
+                    fd_times, analytic_times, rtol=5e-4, atol=1e-6
+                ))
+            coefficient_pass = bool(np.isclose(
+                fd_coefficient, analytic_coefficient, rtol=5e-4, atol=1e-9
+            ))
+            passed.append(stable_counts and time_pass and coefficient_pass)
+            emit("NEURON_REFERENCE_FINITE_DIFFERENCE", {
+                "direction": name, "epsilon": epsilon,
+                "perturbed_spike_counts": [len(t) for t in perturbed],
+                "coefficient_derivative_analytic": analytic_coefficient,
+                "coefficient_derivative_fd": float(fd_coefficient),
+                "maximum_spike_time_derivative_absolute_error": time_error,
+                "all_spike_time_derivatives_within_tolerance": time_pass,
+                "coefficient_derivative_within_tolerance": coefficient_pass,
+                "pass": passed[-1],
+            })
+        all_local.append(all(passed[-2:]))
+    require(all(all_local), "Derivative reference failed at the two smallest perturbations")
+    emit("PASS_NEURON_CONTINUOUS_DERIVATIVES", {
+        "directions_checked": len(directions), "perturbations_per_direction": 4,
+        "two_smallest_perturbations_passed_each_direction": True,
+        "single_impulse_derivative_check": "pass",
+        "scope": "one neuron; spike-time and additive readout derivatives",
+        "eventprop_gradient_correctness_certified": False,
+    })
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--neuron", type=int, default=298)
+    parser.add_argument("--check-derivatives", action="store_true")
     parser.add_argument("artifacts", type=Path, nargs=2)
     args = parser.parse_args()
     require(0 <= args.neuron < 392, "Hidden neuron ID out of range")
@@ -155,6 +292,7 @@ def main():
     ends = payload.end_spikes.astype(np.int64)
     starts = np.r_[0, ends[:-1]]
     jumps = {}
+    jump_derivatives = {}
     incoming_spikes = 0
     for ky in range(5):
         for kx in range(5):
@@ -165,6 +303,9 @@ def main():
                 for time in payload.spike_times[starts[pre]:ends[pre]]:
                     time = float(time)
                     jumps[time] = jumps.get(time, 0.0) + weight
+                    if time not in jump_derivatives:
+                        jump_derivatives[time] = np.zeros(50)
+                    jump_derivatives[time][(ky * 5 + kx) * 2 + polarity] += 1.0
                     incoming_spikes += 1
     continuous, residual = trajectory(jumps, 1024.0)
     repeated, _ = trajectory(jumps, 1024.0, iterations=60)
@@ -210,6 +351,8 @@ def main():
         "eventprop_gradient_correctness_certified": False,
         "scope": "continuous forward trajectory of one frozen hidden neuron",
     })
+    if args.check_derivatives:
+        check_derivatives(jumps, jump_derivatives, 1024.0, times)
 
 
 if __name__ == "__main__":
