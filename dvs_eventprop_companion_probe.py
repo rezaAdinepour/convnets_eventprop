@@ -24,10 +24,14 @@ require = base.require
 emit = base.emit
 
 class FirstBatchBackward(Callback):
-    def __init__(self, hid, out, labels, reference):
+    def __init__(self, hid, out, first_indices, labels, reference):
         self.layers = [hid, out]
         self.hid = hid
         self.out = out
+        self.first_indices = tuple(first_indices)
+        require(self.first_indices.count(0) == 1,
+                "Expected exactly one A in the first batch")
+        self.a_lane = self.first_indices.index(0)
         self.labels = np.asarray(labels, dtype=np.int64)
         self.reference = reference
         self.records = []
@@ -75,32 +79,52 @@ class FirstBatchBackward(Callback):
             require(expected.shape == (size,)
                     and np.isfinite(expected).all(),
                     "Invalid B1 reference gradient")
-            difference = float(np.max(np.abs(lanes[0] - expected)))
 
+            empty_differences = {
+                str(lane): float(np.max(np.abs(lanes[lane])))
+                for lane, index in enumerate(self.first_indices)
+                if index == 3
+            }
             comparison = {
                 "projection": projection,
+                "A_lane": self.a_lane,
                 "raw_storage_shape": list(raw.shape),
                 "lane_gradient_l2": [
                     float(np.linalg.norm(lane)) for lane in lanes
                 ],
-                "A_vs_half_B1_max_absolute_difference": difference,
+                "A_vs_half_B1_max_absolute_difference": float(
+                    np.max(np.abs(lanes[self.a_lane] - expected))
+                ),
+                "empty_lane_max_absolute_gradient": empty_differences,
             }
             comparisons.append(comparison)
             emit("FIRST_BATCH_BACKWARD", comparison)
+
             np.testing.assert_allclose(
-                lanes[0], expected, rtol=2e-5, atol=2e-7,
+                lanes[self.a_lane], expected, rtol=2e-5, atol=2e-7,
                 err_msg="A's B2 lane gradient differs from half its B1 gradient",
             )
+            for lane, index in enumerate(self.first_indices):
+                if index == 3:
+                    require(bool((lanes[lane] == 0).all()),
+                            f"Nonzero gradient in empty lane {lane}")
 
         self.records.append(comparisons)
+        names = {0: "A", 1: "B", 2: "C", 3: "empty"}
         emit("PASS_FIRST_BATCH_BACKWARD_SCALING", {
-            "backward_examples": ["A", "B"],
-            "A_lane": 0,
+            "backward_examples": [
+                names[index] for index in self.first_indices
+            ],
+            "A_lane": self.a_lane,
+            "empty_lanes_checked": [
+                lane for lane, index in enumerate(self.first_indices)
+                if index == 3
+            ],
             "capture_position": "before GradientBatchReduce",
             "B1_to_B2_expected_scale": 0.5,
             "replay_limits": bounds.tolist(),
             "optimizer_updates": 0,
-            "scope": "A in first B2 batch with real companion B",
+            "scope": "A's first replay in the selected B2 layout",
             "arbitrary_batch_companion_independence_certified": False,
             "exact_gradient_correctness_certified": False,
         })
@@ -140,10 +164,13 @@ def training_forward(
     state = {out: metric.create_state()}
     backward = None
     if first_backward_reference is not None:
-        require(tuple(layout[0]) == (0, 1),
-                "First backward check requires initial batch [A,B]")
+        first_indices = tuple(layout[0])
+        first_labels = [
+            0 if index == 3 else int(labels[index])
+            for index in first_indices
+        ]
         backward = FirstBatchBackward(
-            hid, out, labels[:2], first_backward_reference
+            hid, out, first_indices, first_labels, first_backward_reference
         )
 
     callbacks = CallbackList(
@@ -181,7 +208,11 @@ def training_forward(
 
     callbacks.on_epoch_end(0, state)
     callbacks.on_train_end(state)
-    require(state[out].total == 6, "Empty lanes contaminated metric counts")
+    expected_real = sum(
+        index != 3 for indices in layout for index in indices
+    )
+    require(state[out].total == expected_real,
+            "Empty lanes contaminated metric counts")
     if backward is not None:
         require(len(backward.records) == 1,
                 "Missing or duplicated first backward capture")
@@ -196,6 +227,7 @@ def main():
         "--compiler", choices=("inference", "eventprop"), default="inference"
     )
     parser.add_argument("--check-first-backward", action="store_true")
+    parser.add_argument("--first-pair", choices=("AB", "EA"), default="AB")
     args = parser.parse_args()
 
     require(
@@ -252,7 +284,8 @@ def main():
                 "Initial-weight hash mismatch")
 
     # Reference index 3 denotes the empty presentation.
-    layout = [(0, 1), (2, 0), (0, 3), (3, 0), (3, 3)]
+    first_pair = {"AB": (0, 1), "EA": (3, 0)}[args.first_pair]
+    layout = [first_pair, (2, 0), (0, 3), (3, 0), (3, 3)]
     order = [index for batch in layout for index in batch]
     empty = base.to_ml_genn(base.PreprocessedSpikes(
         np.zeros(2048, dtype=np.uint32),
@@ -262,6 +295,7 @@ def main():
     presentations = [examples[index] for index in order]
 
     emit("COMPANION_PLAN", {
+        "first_pair": args.first_pair,
         "check_first_backward": args.check_first_backward,
         "current": current,
             "compiler_mode": args.compiler,
@@ -419,8 +453,8 @@ def main():
         else "PASS_INFERENCE_COMPANION_PARITY",
         {
             "max_absolute_score_difference": maximum,
-            "real_example_presentations": 6,
-            "empty_presentations": 4,
+            "real_example_presentations": sum(index != 3 for index in order),
+            "empty_presentations": sum(index == 3 for index in order),
             "A_hidden_spike_id_time_parity": "exact",
             "weights_unchanged": True,
             "optimizer_updates": 0,
