@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pygenn.genn_model import UnresolvedType
+
 import dvs_eventprop_resource_probe as resource
 import dvs_eventprop_limiter_probe as audit
 import dvs_eventprop_pipeline_limiter_probe as pipeline
@@ -19,16 +21,68 @@ emit = resource.emit
 pull = resource.pull
 
 
+class DoubleScalarAuditCompiler(audit.AuditCompiler):
+    def pre_compile(self, network, genn_model, **kwargs):
+        require(
+            not genn_model.neuron_populations
+            and not genn_model.synapse_populations,
+            "Precision must be selected before populations are built",
+        )
+        genn_model.precision = UnresolvedType("double")
+        # Keep the same clock type. These binary timestep values are exact.
+        genn_model.time_precision = UnresolvedType("float")
+        return super().pre_compile(network, genn_model, **kwargs)
+
+    def build_neuron_model(self, pop, model, compile_state):
+        result = super().build_neuron_model(pop, model, compile_state)
+        scratch_names = {"SpikeTimes", "RingSpikeTime", "RingIsyn"}
+
+        for name, value in list(result.egp_vals.items()):
+            if isinstance(value, np.ndarray) and np.issubdtype(
+                value.dtype, np.floating
+            ):
+                if name in scratch_names:
+                    # These buffers originate from np.empty. Allocate the
+                    # correct dtype without reading their undefined contents.
+                    result.egp_vals[name] = np.empty(
+                        value.shape, dtype=np.float64
+                    )
+                else:
+                    require(np.isfinite(value).all(),
+                            f"Nonfinite initialized EGP: {name}")
+                    result.egp_vals[name] = value.astype(np.float64)
+        return result
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument(
         "--dt-ms",
         type=float,
-        choices=(1.0, 0.0078125, 0.00390625, 0.001953125),
+        choices=(1.0, 0.0078125, 0.00390625, 0.001953125, 0.0009765625),
         default=0.0078125,
     )
+    parser.add_argument(
+        "--scalar-precision", choices=("float", "double"), default="float"
+    )
+    parser.add_argument("--initial-values-from", type=Path)
+    parser.add_argument(
+        "--allow-initializer-timestep-change", action="store_true"
+    )
     args = parser.parse_args()
+    require(
+        not args.allow_initializer_timestep_change
+        or args.initial_values_from is not None,
+        "Initializer timestep-change flag requires --initial-values-from",
+    )
+    require(
+        args.scalar_precision != "double"
+        or args.initial_values_from is not None,
+        "The double precision control requires saved initial weight values",
+    )
+    scalar_dtype = np.dtype(
+        np.float64 if args.scalar_precision == "double" else np.float32
+    )
 
     horizon_ms = 128.0
     steps = int(horizon_ms / args.dt_ms)
@@ -57,6 +111,8 @@ def main():
 
     condition = {
         **config.record(),
+        "scalar_precision": args.scalar_precision,
+        "time_precision": "float",
         "frames_meaning": "number of 1ms input occupancy bins",
         "input_bin_ms": 1.0,
         "physical_horizon_ms": horizon_ms,
@@ -80,7 +136,81 @@ def main():
         },
         "nvtx_library_sha256": resource.file_hash(resource.NVTX_LIBRARY),
     }
+    previous = None
+    initial_values_source = None
+    if args.initial_values_from is not None:
+        source_path = args.initial_values_from.resolve(strict=True)
+        previous = resource.json.loads(source_path.read_text())
+
+        # Explicit cross-revision initializer import, not a checkpoint reload.
+        for key, value in identity.items():
+            if key not in {"convnets_commit", "diagnostic_sha256"}:
+                require(previous["identity"][key] == value,
+                        f"Initializer source/environment mismatch: {key}")
+
+        source_condition = dict(previous["condition"])
+        source_condition.setdefault("scalar_precision", "float")
+        source_condition.setdefault("time_precision", "float")
+        require(source_condition["scalar_precision"] == "float",
+                "This control expects a float32 initializer artifact")
+        require(source_condition["time_precision"] == "float",
+                "Unexpected source clock precision")
+        require(set(source_condition) == set(condition),
+                "Initializer condition schema changed")
+
+        allowed_changes = {"scalar_precision"}
+        if args.allow_initializer_timestep_change:
+            allowed_changes.update({
+                "dt_ms", "simulation_timesteps", "compiler_max_spikes"
+            })
+
+        condition_changes = {
+            key: {
+                "source": source_condition[key],
+                "target": condition[key],
+            }
+            for key in condition
+            if source_condition[key] != condition[key]
+        }
+        require(
+            set(condition_changes).issubset(allowed_changes),
+            "Initializer condition changed beyond explicitly allowed fields",
+        )
+        require(
+            previous["sample_metadata"] == resource.normalize(metadata),
+            "Initializer source input/provenance mismatch",
+        )
+        require(previous["optimizer_updates"] == 0
+                and previous["weights_and_moments_unchanged"],
+                "Initializer artifact was not frozen")
+        require(len(previous["initial_weights"]) == 2
+                and len(previous["initial_weight_sha256"]) == 2,
+                "Expected two initializer projections")
+
+        for values, size, digest in zip(
+            previous["initial_weights"], (400, 4312),
+            previous["initial_weight_sha256"],
+        ):
+            original = np.asarray(values, dtype=np.float64)
+            stored = np.asarray(values, dtype=np.float32)
+            require(original.shape == stored.shape == (size,)
+                    and np.isfinite(original).all(),
+                    "Invalid saved initializer")
+            np.testing.assert_array_equal(
+                original, stored.astype(np.float64)
+            )
+            require(resource.capacity.array_hash(stored) == digest,
+                    "Initializer hash mismatch")
+
+        initial_values_source = {
+            "condition_changes": condition_changes,
+            "path": str(source_path),
+            "sha256": resource.file_hash(source_path),
+            "reference_git_head": previous["identity"]["convnets_commit"],
+            "operation": "import initial numerical values only",
+        }
     emit("CANDIDATE_PLAN", {
+        "initial_values_source": initial_values_source,
         "identity": identity,
         "condition": condition,
         "data_config": data_config.record(),
@@ -90,7 +220,22 @@ def main():
     with observer.phase("model_definition"):
         network, inp, hid, out = resource.build_model(config, 1)
         layers = [hid, out]
-        compiler = audit.AuditCompiler(
+        if previous is not None:
+            for layer, values, shape in zip(
+                layers, previous["initial_weights"],
+                ((5, 5, 2, 8), (392, 11)),
+            ):
+                layer.connection().connectivity.weight = (
+                    np.asarray(values, dtype=scalar_dtype)
+                    .reshape(shape).copy()
+                )
+
+        compiler_class = (
+            DoubleScalarAuditCompiler
+            if args.scalar_precision == "double"
+            else audit.AuditCompiler
+        )
+        compiler = compiler_class(
             example_timesteps=steps,
             losses="sparse_categorical_crossentropy",
             dt=args.dt_ms, batch_size=1, rng_seed=config.seed,
@@ -140,6 +285,48 @@ def main():
 
         initial_state = resource.checkpoint.training_state(cn, layers)
         initial_weights = initial_state[:2]
+        require(all(value.dtype == scalar_dtype for value in initial_state),
+                "Weight/Adam storage precision differs from requested precision")
+
+        observed_dtypes = {}
+        for name, layer in (("hidden", hid), ("output", out)):
+            pop = cn.neuron_populations[layer.population()]
+            group = cn.connection_populations[layer.connection()]
+            for variable in ("v", "Lambdav"):
+                value = pull(pop.vars[variable])
+                require(value.dtype == scalar_dtype,
+                        f"{name}/{variable} precision mismatch")
+                observed_dtypes[f"{name}/{variable}"] = str(value.dtype)
+            for variable in ("weight", "weightGradient"):
+                value = pull(group.vars[variable])
+                require(value.dtype == scalar_dtype,
+                        f"{name}/{variable} precision mismatch")
+                observed_dtypes[f"{name}/{variable}"] = str(value.dtype)
+
+        for name, layer in (("input", inp), ("hidden", hid), ("output", out)):
+            pop = cn.neuron_populations[layer.population()]
+            for variable, egp in pop.extra_global_params.items():
+                dtype = egp.view.dtype
+                if np.issubdtype(dtype, np.floating):
+                    require(dtype == scalar_dtype,
+                            f"{name}/{variable} scalar-buffer precision mismatch")
+                    observed_dtypes[f"{name}/egp/{variable}"] = str(dtype)
+
+        if previous is not None:
+            for actual, expected in zip(
+                initial_weights, previous["initial_weights"]
+            ):
+                np.testing.assert_array_equal(
+                    actual.reshape(-1).astype(np.float64),
+                    np.asarray(expected, dtype=np.float64),
+                )
+
+        emit("OBSERVED_PRECISION", {
+            "requested_scalar_precision": args.scalar_precision,
+            "time_precision": "float",
+            "array_dtypes": observed_dtypes,
+            "initial_values_exactly_restored": previous is not None,
+        })
         metric = resource.RealOnlyAccuracy()
         state = {out: metric.create_state()}
         callbacks = resource.CallbackList(
@@ -220,6 +407,9 @@ def main():
     observer.snapshot("after_unload")
     minimum_free = min(s["free_fraction"] for s in observer.snapshots)
     result = {
+        "initial_values_source": initial_values_source,
+        "initial_weight_dtypes": [str(w.dtype) for w in initial_weights],
+        "observed_dtypes": observed_dtypes,
         "identity": identity,
         "condition": condition,
         "sample_metadata": resource.normalize(metadata),
