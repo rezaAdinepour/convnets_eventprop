@@ -59,7 +59,10 @@ def main():
     parser.add_argument(
         "--dt-ms",
         type=float,
-        choices=(1.0, 0.0078125, 0.00390625, 0.001953125, 0.0009765625),
+        choices=(
+            1.0, 0.0078125, 0.00390625, 0.001953125,
+            0.0009765625, 0.00048828125,
+        ),
         default=0.0078125,
     )
     parser.add_argument(
@@ -73,14 +76,25 @@ def main():
     parser.add_argument(
         "--allow-initializer-capacity-change", action="store_true"
     )
+    parser.add_argument(
+        "--input-frames", type=int, choices=(128, 1024), default=128
+    )
+    parser.add_argument(
+        "--allow-initializer-window-change", action="store_true"
+    )
     args = parser.parse_args()
     require(
         not (
             args.allow_initializer_timestep_change
             or args.allow_initializer_capacity_change
+            or args.allow_initializer_window_change
         )
         or args.initial_values_from is not None,
         "Initializer change flags require --initial-values-from",
+    )
+    require(
+        args.input_frames == 128 or args.tape_capacity is not None,
+        "A 1024ms diagnostic requires an explicit tape capacity",
     )
     require(
         args.scalar_precision != "double"
@@ -91,7 +105,7 @@ def main():
         np.float64 if args.scalar_precision == "double" else np.float32
     )
 
-    horizon_ms = 128.0
+    horizon_ms = float(args.input_frames)
     steps = int(horizon_ms / args.dt_ms)
     require(steps * args.dt_ms == horizon_ms, "Horizon mismatch")
     capacity = (
@@ -100,7 +114,9 @@ def main():
     )
     require(capacity >= 3, "Tape capacity must be at least 3")
     # frames still means input occupancy bins, not simulation timesteps.
-    config = resource.ProbeConfig(frames=128, dt_ms=args.dt_ms)
+    config = resource.ProbeConfig(
+        frames=args.input_frames, dt_ms=args.dt_ms
+    )
     np.random.seed(config.seed)
     require(
         resource.os.environ.get("CUDA_VISIBLE_DEVICES") in (None, "", "0"),
@@ -113,7 +129,7 @@ def main():
     with observer.phase("data_preparation"):
         root = args.root.resolve(strict=True)
         row = resource.pilot(resource.inventory(root)["train"], 2)[0]
-        data_config = resource.DataConfig(128)
+        data_config = resource.DataConfig(args.input_frames)
         payload, label, metadata = resource.load_sample(
             root, row, data_config
         )
@@ -122,6 +138,7 @@ def main():
 
     condition = {
         **config.record(),
+        "profile": data_config.profile,
         "scalar_precision": args.scalar_precision,
         "time_precision": "float",
         "frames_meaning": "number of 1ms input occupancy bins",
@@ -176,6 +193,16 @@ def main():
             })
         if args.allow_initializer_capacity_change:
             allowed_changes.add("compiler_max_spikes")
+        if args.allow_initializer_window_change:
+            require(
+                source_condition["frames"] == 128
+                and condition["frames"] == 1024,
+                "Only an explicit 128ms-to-1024ms initializer import is allowed",
+            )
+            allowed_changes.update({
+                "frames", "profile", "physical_horizon_ms",
+                "simulation_timesteps",
+            })
         condition_changes = {
             key: {
                 "source": source_condition[key],
@@ -188,10 +215,49 @@ def main():
             set(condition_changes).issubset(allowed_changes),
             "Initializer condition changed beyond explicitly allowed fields",
         )
-        require(
-            previous["sample_metadata"] == resource.normalize(metadata),
-            "Initializer source input/provenance mismatch",
-        )
+        window_import_audit = None
+        if args.allow_initializer_window_change:
+            # Reconstruct the original input condition and preserve its prefix.
+            source_data_config = resource.DataConfig(source_condition["frames"])
+            source_payload, source_label, source_metadata = (
+                resource.load_sample(root, row, source_data_config)
+            )
+            require(
+                previous["sample_metadata"] == resource.normalize(source_metadata),
+                "Reconstructed initializer source metadata differs",
+            )
+            require(source_label == label,
+                    "Window extension changed the label")
+            for key in (
+                "archive_sha256", "sample_sha256", "stable_id",
+                "parent_id", "origin_us", "loader_source_sha256",
+            ):
+                require(
+                    source_metadata[key] == metadata[key],
+                    f"Window extension changed raw provenance: {key}",
+                )
+            source_payload = resource.to_ml_genn(source_payload)
+            source_pairs = resource.expected_pairs(source_payload)
+            target_prefix_pairs = [
+                pair for pair in resource.expected_pairs(payload)
+                if pair[1] < source_condition["physical_horizon_ms"]
+            ]
+            require(
+                target_prefix_pairs == source_pairs,
+                "Extended input does not preserve the original 128ms prefix",
+            )
+            window_import_audit = {
+                "source_sample_metadata": resource.normalize(source_metadata),
+                "source_prefix_spikes": len(source_pairs),
+                "target_prefix_spikes": len(target_prefix_pairs),
+                "prefix_id_time_parity": "exact",
+                "raw_parent_provenance": "exact_match",
+            }
+        else:
+            require(
+                previous["sample_metadata"] == resource.normalize(metadata),
+                "Initializer source input/provenance mismatch",
+            )
         require(previous["optimizer_updates"] == 0
                 and previous["weights_and_moments_unchanged"],
                 "Initializer artifact was not frozen")
@@ -216,6 +282,7 @@ def main():
 
         initial_values_source = {
             "condition_changes": condition_changes,
+            "window_import_audit": window_import_audit,
             "path": str(source_path),
             "sha256": resource.file_hash(source_path),
             "reference_git_head": previous["identity"]["convnets_commit"],
@@ -467,7 +534,10 @@ def main():
     require(minimum_free >= 0.20,
             "Less than 20 percent sampled device memory headroom")
     emit("PASS_SINGLE_DVS_CANDIDATE", {
-        "scope": "one frozen 128ms DVS example and backward drain",
+        "scope": (
+            f"one frozen {args.input_frames}ms DVS example "
+            "and backward drain"
+        ),
         "strict_buffer_checking": True,
         "weights_and_moments_unchanged": True,
         "continuous_device_headroom_certified": False,
