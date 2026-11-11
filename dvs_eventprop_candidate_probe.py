@@ -69,11 +69,18 @@ def main():
     parser.add_argument(
         "--allow-initializer-timestep-change", action="store_true"
     )
+    parser.add_argument("--tape-capacity", type=int)
+    parser.add_argument(
+        "--allow-initializer-capacity-change", action="store_true"
+    )
     args = parser.parse_args()
     require(
-        not args.allow_initializer_timestep_change
+        not (
+            args.allow_initializer_timestep_change
+            or args.allow_initializer_capacity_change
+        )
         or args.initial_values_from is not None,
-        "Initializer timestep-change flag requires --initial-values-from",
+        "Initializer change flags require --initial-values-from",
     )
     require(
         args.scalar_precision != "double"
@@ -87,7 +94,11 @@ def main():
     horizon_ms = 128.0
     steps = int(horizon_ms / args.dt_ms)
     require(steps * args.dt_ms == horizon_ms, "Horizon mismatch")
-    capacity = 2 * steps + 1
+    capacity = (
+        2 * steps + 1
+        if args.tape_capacity is None else args.tape_capacity
+    )
+    require(capacity >= 3, "Tape capacity must be at least 3")
     # frames still means input occupancy bins, not simulation timesteps.
     config = resource.ProbeConfig(frames=128, dt_ms=args.dt_ms)
     np.random.seed(config.seed)
@@ -163,7 +174,8 @@ def main():
             allowed_changes.update({
                 "dt_ms", "simulation_timesteps", "compiler_max_spikes"
             })
-
+        if args.allow_initializer_capacity_change:
+            allowed_changes.add("compiler_max_spikes")
         condition_changes = {
             key: {
                 "source": source_condition[key],
@@ -420,6 +432,7 @@ def main():
         "scores": np.asarray(scores).tolist(),
         "input_spikes": len(payload.spike_times),
         "hidden_spikes": len(hidden[0]),
+        "hidden_spike_pairs": hidden[0],
         "hidden_max_spikes_per_neuron": int(neuron_counts.max()),
         "hidden_spikes_per_filter": filter_counts.tolist(),
         "hidden_spikes_per_neuron": neuron_counts.tolist(),
