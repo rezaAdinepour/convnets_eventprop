@@ -1,4 +1,4 @@
-"""Frozen B1 full-window parity/timing with spike recording and audit disabled.
+"""Frozen B1/B8 full-window parity/timing with recording and audit disabled.
 
 No training updates. Source-checked private training API; fresh run directory.
 """
@@ -23,10 +23,76 @@ class DoublePlainCompiler(candidate.DoubleScalarAuditCompiler):
         )
 
 
+class CaptureLanes(r.CustomUpdateOnBatchEnd):
+    def __init__(self, layers, hidden, output, baseline, batch_size):
+        super().__init__("GradientBatchReduce")
+        self.layers, self.hidden, self.output = layers, hidden, output
+        self.baseline, self.batch_size = baseline, batch_size
+        self.raw = []
+
+    def on_batch_end(self, cn, batch, metrics):
+        if batch != 1:
+            return
+        np.testing.assert_array_equal(
+            pull(cn.neuron_populations[self.output.population()].vars["YTrueBack"]).reshape(-1),
+            np.full(self.batch_size, self.baseline["sample_metadata"]["label"]),
+        )
+        for index, (layer, size) in enumerate(zip(self.layers, (400, 4312))):
+            value = pull(cn.connection_populations[layer.connection()].vars["weightGradient"])
+            require(value.dtype == np.float64 and value.size == self.batch_size * size,
+                    "Invalid raw lane gradient storage")
+            lanes = value.reshape(self.batch_size, size)
+            expected = np.asarray(self.baseline["gradients"][index]) / self.batch_size
+            require(np.isfinite(lanes).all(), "Nonfinite lane gradient")
+            for lane in lanes:
+                np.testing.assert_allclose(lane, expected, rtol=1e-9, atol=1e-11)
+            self.raw.append(lanes.copy())
+            emit("BATCH_LANE_GRADIENT_PARITY", {
+                "projection": index, "batch_size": self.batch_size,
+                "raw_shape": list(value.shape), "expected_scale_to_B1": 1.0 / self.batch_size,
+                "max_absolute_difference": float(np.max(np.abs(lanes - expected))),
+                "capture_position": "before GradientBatchReduce",
+            })
+
+
+class CaptureReduced(r.CustomUpdateOnBatchEnd):
+    def __init__(self, layers, hidden, lane_capture):
+        super().__init__("GradientLearn")
+        self.layers, self.hidden, self.lane_capture = layers, hidden, lane_capture
+        self.records = []
+
+    def on_batch_end(self, cn, batch, metrics):
+        if batch != 1:
+            return
+        require(len(self.lane_capture.raw) == 2, "Raw lane capture did not run")
+        gradients = []
+        for index, (layer, size) in enumerate(zip(self.layers, (400, 4312))):
+            matches = [cu for name, cu in cn.genn_model.custom_updates.items()
+                       if name.startswith("CUBatchReduce")
+                       and "ReducedGradient" in cu.vars
+                       and cu.vars["ReducedGradient"].view.size == size]
+            require(len(matches) == 1, "Reduced-gradient ownership is ambiguous")
+            reduced = pull(matches[0].vars["ReducedGradient"]).reshape(-1)
+            require(reduced.dtype == np.float64, "Reduction precision changed")
+            expected = self.lane_capture.raw[index].sum(axis=0)
+            np.testing.assert_allclose(reduced, expected, rtol=1e-9, atol=1e-11)
+            gradients.append(reduced.copy())
+            raw = pull(cn.connection_populations[layer.connection()].vars["weightGradient"])
+            np.testing.assert_array_equal(raw, np.zeros_like(raw))
+            emit("BATCH_REDUCTION_PARITY", {
+                "projection": index,
+                "max_absolute_difference_to_lane_sum": float(np.max(np.abs(reduced - expected))),
+                "raw_gradients_cleared": True,
+            })
+        limit = pull(cn.neuron_populations[self.hidden.population()].vars["LambdavLimit"])
+        self.records.append({"index": 0, "gradients": gradients, "limit": limit})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--baseline", type=Path, required=True)
+    parser.add_argument("--batch-size", type=int, choices=(1, 8), default=1)
     args = parser.parse_args()
     path = args.baseline.resolve(strict=True)
     baseline = r.json.loads(path.read_text())
@@ -39,7 +105,10 @@ def main():
     for name, digest in baseline["identity"]["helper_sha256"].items():
         require(r.file_hash(Path(__file__).with_name(name)) == digest,
                 f"Baseline helper changed: {name}")
-    condition = baseline["condition"]
+    require(baseline["condition"]["batch_size"] == 1, "Expected B1 baseline")
+    batch_size = args.batch_size
+    condition = {**baseline["condition"], "batch_size": batch_size,
+                 "real_examples": batch_size}
     require(condition["frames"] == 1024 and condition["dt_ms"] == 0.0001220703125
             and condition["scalar_precision"] == "double"
             and condition["compiler_max_spikes"] == 8193,
@@ -58,7 +127,7 @@ def main():
     require(r.normalize(metadata) == baseline["sample_metadata"], "Input provenance changed")
     config = r.ProbeConfig(frames=1024, dt_ms=condition["dt_ms"])
     np.random.seed(config.seed)
-    network, inp, hid, out = r.build_model(config, 1)
+    network, inp, hid, out = r.build_model(config, batch_size)
     layers = [hid, out]
     for layer in (inp, hid):
         layer.population().record_spikes = False
@@ -67,27 +136,40 @@ def main():
         layer.connection().connectivity.weight = np.asarray(values, dtype=np.float64).reshape(shape).copy()
     compiler = DoublePlainCompiler(
         example_timesteps=condition["simulation_timesteps"],
-        losses="sparse_categorical_crossentropy", dt=config.dt_ms, batch_size=1,
+        losses="sparse_categorical_crossentropy", dt=config.dt_ms, batch_size=batch_size,
         rng_seed=42, max_spikes=8193, strict_buffer_checking=True,
         per_timestep_loss=False, grad_limit=100.0, softmax_temperature=1.0,
     )
-    cn = compiler.compile(network, name="PlainFrozenB1", optimisers={
+    cn = compiler.compile(network, name=f"PlainFrozenB{batch_size}", optimisers={
         hid: {"weight": r.Adam(alpha=0.001)}, out: {"weight": r.Adam(alpha=0.001)},
     }, regularisers={})
     require(compiler.instrumentation == [], "Limiter telemetry was not disabled")
-    capture = r.capacity.CaptureAndClear(layers, hid, out, np.array([label]), 8193)
+    lane_capture = CaptureLanes(layers, hid, out, baseline, batch_size) if batch_size > 1 else None
+    capture = (CaptureReduced(layers, hid, lane_capture) if lane_capture is not None else
+               r.capacity.CaptureAndClear(layers, hid, out, np.array([label]), 8193))
     found = {name: 0 for name in ("GradientLearn", "AbsSumReduceBatch", "ReduceAssign")}
-    for i, callback in enumerate(cn.base_train_callbacks):
+    callbacks_modified = []
+    reductions = 0
+    for callback in cn.base_train_callbacks:
+        if isinstance(callback, r.CustomUpdateOnBatchEnd) and callback.name == "GradientBatchReduce":
+            reductions += 1
+            require(lane_capture is not None, "Unexpected B1 batch reduction")
+            callbacks_modified.append(lane_capture)
         if isinstance(callback, r.CustomUpdateOnBatchEnd) and callback.name in found:
             found[callback.name] += 1
-            cn.base_train_callbacks[i] = (capture if callback.name == "GradientLearn" else
+            callbacks_modified.append(capture if callback.name == "GradientLearn" else
                 r.CustomUpdateOnBatchEnd(callback.name, lambda batch: False))
+        else:
+            callbacks_modified.append(callback)
     require(all(n == 1 for n in found.values()), "Unexpected callback structure")
+    require(reductions == int(batch_size > 1), "Unexpected batch-reduction callback count")
+    cn.base_train_callbacks[:] = callbacks_modified
     emit("PLAIN_RESOURCE_PLAN", {"identity": identity,
         "diagnostic_sha256": r.file_hash(Path(__file__)), "baseline_sha256": r.file_hash(path),
         "condition": condition, "spike_recording": False, "limiter_instrumentation": False,
         "limiter_policy": "fixed bound 1", "optimizer_updates": 0,
-        "scope": "frozen B1 parity and diagnostic timing; not production training throughput"})
+        "unique_training_parents": 1,
+        "scope": f"frozen B{batch_size} repeated-parent parity; not production training throughput"})
     real = r.to_ml_genn(payload)
     empty = r.to_ml_genn(r.PreprocessedSpikes(np.zeros(2048, dtype=np.uint32),
                                               np.empty(0, dtype=np.float32)))
@@ -119,20 +201,23 @@ def main():
         for batch, sample in enumerate((real, empty)):
             metric.real_presentation = batch == 0
             with observer.phase(f"presentation_{batch}"):
-                cn._train_batch(batch, 0, {inp: [sample]},
-                    {out: np.array([label if batch == 0 else 0], dtype=np.int64)},
+                cn._train_batch(batch, 0, {inp: [sample] * batch_size},
+                    {out: np.full(batch_size, label if batch == 0 else 0, dtype=np.int64)},
                     {out: metric}, state, callbacks)
-                scores.append(np.array(cn.get_readout(out), copy=True)[0])
+                value = np.array(cn.get_readout(out), copy=True)
+                require(value.shape == (batch_size, 11) and np.isfinite(value).all(),
+                        "Invalid batched scores")
+                scores.append(value[0] if batch_size == 1 else value)
             observer.snapshot(f"after_presentation_{batch}")
             pop = cn.neuron_populations[inp.population()]
             np.testing.assert_array_equal(pull(pop.vars["StartSpike"]), pull(pop.vars["EndSpike"]))
         callbacks.on_epoch_end(0, state)
         callbacks.on_train_end(state)
-        require(state[out].total == 1 and len(capture.records) == 1, "Wrong metric/replay count")
+        require(state[out].total == batch_size and len(capture.records) == 1, "Wrong metric/replay count")
         for a, b in zip(initial_state, r.checkpoint.training_state(cn, layers)):
             np.testing.assert_array_equal(a, b)
         record = capture.records[0]
-        np.testing.assert_array_equal(record["limit"].reshape(-1), [1.0])
+        np.testing.assert_array_equal(record["limit"].reshape(-1), np.ones(batch_size))
         differences = []
         for index, (a, b) in enumerate(zip(record["gradients"], baseline["gradients"])):
             actual, expected = a.reshape(-1), np.asarray(b)
@@ -143,7 +228,10 @@ def main():
             emit("PLAIN_GRADIENT_PARITY", row)
             differences.append(row)
             np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-11)
-        np.testing.assert_allclose(scores, baseline["scores"], rtol=1e-9, atol=1e-11)
+        expected_scores = np.asarray(baseline["scores"])
+        if batch_size > 1:
+            expected_scores = np.repeat(expected_scores[:, None, :], batch_size, axis=1)
+        np.testing.assert_allclose(scores, expected_scores, rtol=1e-9, atol=1e-11)
     observer.snapshot("after_unload")
     minimum_free = min(s["free_fraction"] for s in observer.snapshots)
     pair_ms = sum(p["profiled_wall_ms"] for p in observer.phases
@@ -154,15 +242,18 @@ def main():
         "baseline_sha256": r.file_hash(path), "condition": condition,
         "sample_metadata": metadata, "spike_recording": False, "limiter_instrumentation": False,
         "scores": np.asarray(scores).tolist(), "gradients": [g.tolist() for g in record["gradients"]],
+        "raw_lane_gradients": [g.tolist() for g in lane_capture.raw] if lane_capture else None,
         "gradient_parity": differences, "phases": observer.phases,
         "memory_snapshots": observer.snapshots, "minimum_sampled_free_fraction": minimum_free,
         "frozen_pair_wall_ms": pair_ms, "historical_recorded_pair_wall_ms": baseline_ms,
+        "frozen_pair_wall_ms_per_example": pair_ms / batch_size,
         "timing_comparison_is_controlled_benchmark": False, "optimizer_updates": 0,
         "weights_and_moments_unchanged": True, "full_window_training_ready": False}
     with (Path.cwd() / "plain_resource_result.json").open("x") as stream:
         r.json.dump(report, stream, sort_keys=True, allow_nan=False)
     require(minimum_free >= 0.20, "Less than 20 percent sampled memory headroom")
-    emit("PASS_PLAIN_B1_RESOURCE_PARITY", {"frozen_pair_wall_ms": pair_ms,
+    emit(f"PASS_PLAIN_B{batch_size}_RESOURCE_PARITY", {"frozen_pair_wall_ms": pair_ms,
+         "batch_size": batch_size, "frozen_pair_wall_ms_per_example": pair_ms / batch_size,
          "historical_recorded_pair_wall_ms": baseline_ms,
          "minimum_sampled_free_fraction": minimum_free, "optimizer_updates": 0,
          "scores_and_gradients_match": True, "weights_and_moments_unchanged": True,
