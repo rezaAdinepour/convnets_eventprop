@@ -1,4 +1,4 @@
-"""Train the DVS Gesture EventProp baseline or validate its selected pilot."""
+"""Train the DVS Gesture EventProp baseline or validate a selected checkpoint."""
 
 import argparse
 import json
@@ -136,20 +136,40 @@ def run(data_root, run_dir, pilot, full_epoch=False):
         print("EventProp class pilot: OK" if pilot else "EventProp training smoke: OK")
 
 
-def validate_selected_pilot(data_root, run_dir, pilot_run):
-    pilot_run = pilot_run.resolve(strict=True)
-    saved = json.loads((pilot_run / "selection.json").read_text())
+def validate_selected(data_root, run_dir, source_run, *, pilot):
+    source_run = source_run.resolve(strict=True)
+    saved = json.loads((source_run / "selection.json").read_text())
     best = min(saved["epochs"], key=lambda row: (-row["validation_correct"], row["epoch"]))
-    if best["checkpoint"] != saved["best"] or best["validation_total"] != 11:
-        raise ValueError("Selected checkpoint or validation size disagrees with the pilot")
+    key = best["checkpoint"]
+    if key != saved["best"]:
+        raise ValueError("Selected checkpoint disagrees with the epoch selection rule")
     dataset, train_indices, val_indices = load_development_split(data_root.resolve())
-    _, val_indices = pilot_indices(dataset, train_indices, val_indices)
+    if pilot:
+        _, val_indices = pilot_indices(dataset, train_indices, val_indices)
+    if len(val_indices) != best["validation_total"]:
+        raise ValueError("Validation split size disagrees with the selected epoch")
+    paths = [dataset.data[i] for i in val_indices]
+    if not pilot:
+        with np.load(source_run / f"{key}-validation.npz", allow_pickle=False) as ref:
+            if ref["checkpoint"].item() != key or not np.array_equal(ref["paths"], paths):
+                raise ValueError("Reference checkpoint or ordered validation paths differ")
+            reference_labels = ref["labels"]
+            reference_scores = ref["scores"]
+            reference_predictions = ref["predictions"]
+        shape = (len(paths), len(dataset.classes))
+        if reference_scores.shape != shape or not np.isfinite(reference_scores).all():
+            raise ValueError("Invalid reference scores")
+        if not np.array_equal(reference_scores.argmax(axis=1), reference_predictions):
+            raise ValueError("Reference predictions differ from the saved score argmax")
+        if not np.array_equal(reference_labels, [dataset.targets[i] for i in val_indices]):
+            raise ValueError("Reference labels differ from the ordered Tonic labels")
+        if np.count_nonzero(reference_predictions == reference_labels) != best["validation_correct"]:
+            raise ValueError("Reference correct count disagrees with the selected epoch")
     val_x, val_y = encode_subset(dataset, val_indices, "validation")
-    source = pilot_run / "checkpoints"
+    source = source_run / "checkpoints"
     if not source.is_dir():
         raise FileNotFoundError(source)
     weights = Numpy(str(source))
-    key = best["checkpoint"]
     network = build_model()
     network.load((key,), weights)
 
@@ -172,13 +192,25 @@ def validate_selected_pilot(data_root, run_dir, pilot_run):
         raise ValueError("Unexpected validation scores")
     predicted = scores.argmax(axis=1)
     correct = int(np.count_nonzero(predicted == val_y))
-    np.savez("validation.npz", paths=[dataset.data[i] for i in val_indices],
+    np.savez("validation.npz", paths=paths,
              labels=val_y, scores=scores, predictions=predicted, checkpoint=key)
     print(f"Reloaded {key}: {len(network.connections)} weight arrays matched")
-    print(f"Frozen validation: {correct}/{len(val_y)} | Pilot: {best['validation_correct']}/{best['validation_total']}")
+    original = "Pilot" if pilot else "Training-run validation"
+    print(f"Frozen validation: {correct}/{len(val_y)} | {original}: {best['validation_correct']}/{best['validation_total']}")
+    if not pilot:
+        matches = predicted == reference_predictions
+        difference = np.abs(scores.astype(np.float64) - reference_scores)
+        print(f"Prediction matches: {np.count_nonzero(matches)}/{len(matches)}")
+        print(f"Score matches (exact): {np.count_nonzero(difference == 0)}/{difference.size}")
+        print(f"Absolute score difference: max={difference.max():.9g}, mean={difference.mean():.9g}")
+        for i in np.flatnonzero(~matches):
+            print(f"Mismatch: {paths[i]}, label={val_y[i]}, "
+                  f"training-run prediction={reference_predictions[i]}, reload prediction={predicted[i]}")
+        if not matches.all():
+            raise RuntimeError("Per-parent validation predictions differ; see validation.npz")
     if correct != best["validation_correct"]:
-        raise RuntimeError("Frozen inference and the pilot differ in validation correct count")
-    print("Selected pilot checkpoint: OK")
+        raise RuntimeError("Frozen inference and the selected epoch differ in validation correct count")
+    print("Selected pilot checkpoint: OK" if pilot else "Full validation predictions: OK")
 
 
 if __name__ == "__main__":
@@ -190,8 +222,11 @@ if __name__ == "__main__":
     mode.add_argument("--full-epoch", action="store_true", help="Run one fresh epoch on all development parents")
     mode.add_argument("--validate-pilot", type=Path, metavar="PILOT_RUN",
                       help="Reload the best pilot checkpoint in a fresh inference model")
+    mode.add_argument("--validate-full", type=Path, metavar="TRAINING_RUN",
+                      help="Reload the selected full checkpoint and compare each validation prediction")
     args = parser.parse_args()
-    if args.validate_pilot is not None:
-        validate_selected_pilot(args.data_root, args.run_dir, args.validate_pilot)
+    if args.validate_pilot is not None or args.validate_full is not None:
+        validate_selected(args.data_root, args.run_dir, args.validate_pilot or args.validate_full,
+                          pilot=args.validate_pilot is not None)
     else:
         run(args.data_root, args.run_dir, args.pilot, args.full_epoch)

@@ -154,6 +154,25 @@ best and latest keys. `epoch1-validation.npz` saves the 143 parent paths,
 labels, 11-class readouts, predictions and checkpoint key from the fixed-weight
 validation pass for comparison after reload.
 
+The first full run, `Experiments/task12_full_epoch1_bAuBsRTS`, recorded
+243/934 online training correct and 47/143 fixed-weight validation correct.
+Its selected and latest checkpoint keys are both `epoch1`.
+
+Pass `--validate-full TRAINING_RUN` with a fresh `--run-dir` to compare
+independent inference to the selected epoch's validation archive.
+The check verifies the selected key, ordered parent paths and labels,
+all five device weight arrays, and each predicted class. It reports exact
+score matches plus maximum and mean absolute differences across all 1,573
+scores. The success line refers to predicted-class agreement. The new
+`validation.npz` retains the inferred scores even if a prediction differs.
+
+In `Experiments/task12_full_reload_usig5P7J/reload.log`, the independent
+CUDA inference run matched all five epoch-one weight arrays and reproduced
+all 143 predicted classes. Both runs classified 47/143 validation parents
+correctly (32.87%). Of the 1,573 class scores, 406 matched exactly. The
+maximum absolute difference was 1.90734863e-05 and the mean absolute
+difference was 8.13572436e-07. The official test split remains unevaluated.
+
 ## Sources
 
 - DVS reference in the workspace, `deep-snn-deployment-on-spinnaker2-single-chip-using-nir/PTQ/Training/PTQ.py`, dataset transforms and model definition.
