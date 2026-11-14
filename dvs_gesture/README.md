@@ -173,6 +173,44 @@ correctly (32.87%). Of the 1,573 class scores, 406 matched exactly. The
 maximum absolute difference was 1.90734863e-05 and the mean absolute
 difference was 8.13572436e-07. The official test split remains unevaluated.
 
+## Multi-epoch training on the full split
+
+Use a fresh output directory for each command. A ten-epoch run follows the
+epoch count of the pinned mlGeNN convolutional MNIST example. This is a
+chosen training budget for DVS Gesture. Each parent supplies the same
+200 ms trial used in the one-epoch baseline.
+
+```bash
+./.venv/bin/python -E -s -B dvs_gesture/train.py "$data_root" --run-dir "$job/train" --full-epochs 10
+./.venv/bin/python -E -s -B dvs_gesture/train.py "$data_root" --run-dir "$job/reload" --validate-full "$job/train"
+```
+
+Training starts from fresh weights and keeps the same compiled model and
+Adam state across all epochs. Each epoch uses all 934 training parents once.
+After the initial seed-zero shuffle, the order rotates right by one place
+per epoch so the preceding epoch's final parent contributes a gradient in
+the next epoch. The stock schedule gives 933 learning updates per epoch.
+All 143 validation parents are scored at fixed weights after each epoch.
+
+Each completed epoch has its own checkpoint and validation archive.
+`selection.json` records the planned epoch count, completed metrics, latest
+checkpoint and best checkpoint. The highest validation correct count wins,
+with the earliest epoch breaking ties. Run the second command after training
+succeeds to verify the selected checkpoint's five weight arrays and all
+143 predictions in a separate process.
+
+In `Experiments/task12_full_10epochs_12nNLkyG`, online training accuracy
+rose from 223/934 in epoch 1 to 446/934 in epoch 10. Fixed-weight validation
+rose from 40/143 to 50/143 (34.97%). Epochs 9 and 10 tied, so `epoch9`
+was selected and `epoch10` was the latest checkpoint. The five initial
+weight files in this fresh run have different SHA-256 hashes from their
+counterparts in the earlier one-epoch run.
+
+Independent inference reproduced all five selected weight arrays and all
+143 validation predictions. Of the 1,573 class scores, 431 matched exactly.
+The maximum absolute difference was 0.227964401 and the mean was
+0.00103723951. The cause of the score differences is undetermined.
+
 ## Sources
 
 - DVS reference in the workspace, `deep-snn-deployment-on-spinnaker2-single-chip-using-nir/PTQ/Training/PTQ.py`, dataset transforms and model definition.

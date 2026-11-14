@@ -70,13 +70,13 @@ def check_weights(checkpoints, network, previous, current):
         raise RuntimeError(f"No stored weight changed between {previous} and {current}")
 
 
-def run(data_root, run_dir, pilot, full_epoch=False):
+def run(data_root, run_dir, pilot, full_epochs=None):
     dataset, train_indices, val_indices = load_development_split(data_root.resolve())
     run_dir.mkdir()
     os.chdir(run_dir)
     if pilot:
         train_indices, val_indices = pilot_indices(dataset, train_indices, val_indices)
-    elif full_epoch:
+    elif full_epochs is not None:
         # Mix subjects and labels while keeping the first full epoch reproducible.
         np.random.default_rng(0).shuffle(train_indices)
     else:
@@ -90,11 +90,11 @@ def run(data_root, run_dir, pilot, full_epoch=False):
     checkpoints = Numpy("checkpoints")
     history = []
     previous = "initial"
-    num_epochs = 2 if pilot else 1
+    num_epochs = full_epochs if full_epochs is not None else (2 if pilot else 1)
     with compiled:
         compiled.save((previous,), checkpoints)
         for epoch in range(1, num_epochs + 1):
-            # Rotate once so the last parent of epoch one contributes in epoch two.
+            # Move the preceding epoch's last parent to the front for backward coverage.
             order = np.roll(np.arange(len(train_y)), epoch - 1)
             train_metrics, val_metrics, _, _ = compiled.train_validate(
                 {input_pop: [train_x[i] for i in order]}, {output_pop: train_y[order]},
@@ -110,7 +110,7 @@ def run(data_root, run_dir, pilot, full_epoch=False):
             print(f"Epoch {epoch} | Online train: {train.correct}/{train.total} | "
                   f"Fixed-weight validation: {val.correct}/{val.total}")
             check_weights(checkpoints, network, previous, current)
-            if full_epoch:
+            if full_epochs is not None:
                 scores = np.concatenate(val.scores)
                 predicted = scores.argmax(axis=1)
                 if scores.shape != (len(val_y), len(dataset.classes)) or np.sum(predicted == val_y) != val.correct:
@@ -125,13 +125,16 @@ def run(data_root, run_dir, pilot, full_epoch=False):
                                 final_training_parent=dataset.data[train_indices[order[-1]]]))
             # max keeps the first epoch on a tie. Publish only checked checkpoints.
             best = max(history, key=lambda row: row["validation_correct"])
-            selection = dict(epochs=history, best=best["checkpoint"], latest=current)
+            selection = dict(planned_epochs=num_epochs, epochs=history,
+                             best=best["checkpoint"], latest=current)
             pending = Path("selection.json.tmp")
             pending.write_text(json.dumps(selection, indent=2) + "\n")
             pending.replace("selection.json")
             print(f"Best: {best['checkpoint']} | Latest: {current}")
-    if full_epoch:
+    if full_epochs == 1:
         print("EventProp full development epoch: OK")
+    elif full_epochs is not None:
+        print(f"EventProp full development training: {num_epochs} epochs completed")
     else:
         print("EventProp class pilot: OK" if pilot else "EventProp training smoke: OK")
 
@@ -219,14 +222,19 @@ if __name__ == "__main__":
     parser.add_argument("--run-dir", type=Path, required=True, help="New output directory")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--pilot", action="store_true", help="Use all eleven classes for two epochs")
-    mode.add_argument("--full-epoch", action="store_true", help="Run one fresh epoch on all development parents")
+    mode.add_argument("--full-epoch", dest="full_epochs", action="store_const", const=1,
+                      help="Run one fresh epoch on the full training split")
+    mode.add_argument("--full-epochs", type=int, metavar="N",
+                      help="Run N epochs on the full training split with validation after each epoch")
     mode.add_argument("--validate-pilot", type=Path, metavar="PILOT_RUN",
                       help="Reload the best pilot checkpoint in a fresh inference model")
     mode.add_argument("--validate-full", type=Path, metavar="TRAINING_RUN",
                       help="Reload the selected full checkpoint and compare each validation prediction")
     args = parser.parse_args()
+    if args.full_epochs is not None and args.full_epochs < 1:
+        parser.error("--full-epochs must be at least 1")
     if args.validate_pilot is not None or args.validate_full is not None:
         validate_selected(args.data_root, args.run_dir, args.validate_pilot or args.validate_full,
                           pilot=args.validate_pilot is not None)
     else:
-        run(args.data_root, args.run_dir, args.pilot, args.full_epoch)
+        run(args.data_root, args.run_dir, args.pilot, args.full_epochs)
