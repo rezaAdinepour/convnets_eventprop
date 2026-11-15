@@ -1,41 +1,110 @@
 """Construct the DVS Gesture network using public mlGeNN 3 layers."""
 
 from ml_genn import InputLayer, Layer, SequentialNetwork
-from ml_genn.compilers import EventPropCompiler
+from ml_genn.compilers import EventPropCompiler, InferenceCompiler
 from ml_genn.connectivity import AvgPoolConv2D, Conv2D, Dense
 from ml_genn.initializers import Normal
 from ml_genn.neurons import LeakyIntegrate, LeakyIntegrateFire, SpikeInput
+from ml_genn.optimisers import Adam
 from ml_genn.synapses import Exponential
 
-from data import INPUT_SHAPE, TRIAL_STEPS
+from data import INPUT_SHAPE, NUM_CLASSES, TRIAL_STEPS
+from evdownsampling import BIN_MS
+
+CONV_FILTERS = (16, 16, 8)
+HIDDEN_UNITS = 256
+KERNEL_SIZES = (5, 3, 3, 3)
+CONV_STRIDES = (2, 1, 1, 1)
+PADDING = ("valid", "same", "same", "valid")
+POOL_SIZE = 2
+POOL_SUM = True
+WEIGHT_MEAN = 0.0
+WEIGHT_SD = 1.0
+V_INITIAL = 0.0
+V_THRESHOLD = 1.0
+V_RESET = 0.0
+RELATIVE_RESET = False
+OUTPUT_BIAS = 0.0
+TAU_MEM_MS = 20.0
+TAU_SYN_MS = 5.0
+READOUT = "avg_var_exp_weight"
+LOSS = "sparse_categorical_crossentropy"
+LEARNING_RATE = 0.001
+ADAM_BETA1 = 0.9
+ADAM_BETA2 = 0.999
+ADAM_EPSILON = 1e-8
+GRAD_LIMIT = 100.0
+SOFTMAX_TEMPERATURE = 1.0
+PER_TIMESTEP_LOSS = False
+DT_MS = BIN_MS  # One simulation timestep per input bin.
+BATCH_SIZE = 1  # The delayed-update schedule and input allocation use one parent per batch.
+GENN_SEED = 0
+BACKEND = "cuda"
+MODEL_NAME = "DVSGesture"
+KERNEL_PROFILING = False
+RESET_IN_SYN_BETWEEN_BATCHES = True
+PREFIX_INPUT_CAPACITY = 1_000_000
+PREFIX_TAPE_SLOTS = 500
+ADJACENT_TRIALS = 2
+TAPE_SPARE_SLOTS = 2
+
+# Expected geometry of the recorded architecture for the standalone model check.
+EXPECTED_CONV_SHAPES = ((15, 15, CONV_FILTERS[0]), (15, 15, CONV_FILTERS[1]), (7, 7, CONV_FILTERS[2]))
+EXPECTED_POOL_SHAPES = ((7, 7, CONV_FILTERS[1]), (3, 3, CONV_FILTERS[2]))
 
 
-def build_model():
+def weights():
+    return Normal(mean=WEIGHT_MEAN, sd=WEIGHT_SD)
+
+
+def hidden_neuron():
+    return LeakyIntegrateFire(v=V_INITIAL, v_thresh=V_THRESHOLD, v_reset=V_RESET,
+                              tau_mem=TAU_MEM_MS, relative_reset=RELATIVE_RESET)
+
+
+def build_model(input_capacity=None):
     network = SequentialNetwork()
     with network:
-        InputLayer(SpikeInput(), INPUT_SHAPE, name="input")
-        Layer(Conv2D(Normal(), 16, 5, conv_strides=2, conv_padding="valid"),
-              LeakyIntegrateFire(), synapse=Exponential(), name="conv1")
-        Layer(Conv2D(Normal(), 16, 3, conv_padding="same"),
-              LeakyIntegrateFire(), synapse=Exponential(), name="conv2")
-        Layer(AvgPoolConv2D(Normal(), 8, pool_size=2, conv_size=3,
-                            conv_padding="same", sum=True),
-              LeakyIntegrateFire(), synapse=Exponential(), name="conv3")
-        # One valid kernel spans the entire pooled 3 x 3 field per output unit.
-        Layer(AvgPoolConv2D(Normal(), 256, pool_size=2, conv_size=3,
-                            conv_padding="valid", sum=True, flatten=True),
-              LeakyIntegrateFire(), synapse=Exponential(), name="hidden")
-        Layer(Dense(Normal()), LeakyIntegrate(readout="avg_var_exp_weight"),
-              shape=11, synapse=Exponential(), name="output")
+        input_neuron = SpikeInput(max_spikes=PREFIX_INPUT_CAPACITY if input_capacity is None else input_capacity)
+        InputLayer(input_neuron, INPUT_SHAPE, name="input")
+        for i, name in enumerate(("conv1", "conv2")):
+            Layer(Conv2D(weights(), CONV_FILTERS[i], KERNEL_SIZES[i],
+                         conv_strides=CONV_STRIDES[i], conv_padding=PADDING[i]),
+                  hidden_neuron(), synapse=Exponential(TAU_SYN_MS), name=name)
+        Layer(AvgPoolConv2D(weights(), CONV_FILTERS[2], pool_size=POOL_SIZE, conv_size=KERNEL_SIZES[2],
+                            conv_strides=CONV_STRIDES[2], conv_padding=PADDING[2], sum=POOL_SUM),
+              hidden_neuron(), synapse=Exponential(TAU_SYN_MS), name="conv3")
+        Layer(AvgPoolConv2D(weights(), HIDDEN_UNITS, pool_size=POOL_SIZE, conv_size=KERNEL_SIZES[3],
+                            conv_strides=CONV_STRIDES[3], conv_padding=PADDING[3], sum=POOL_SUM, flatten=True),
+              hidden_neuron(), synapse=Exponential(TAU_SYN_MS), name="hidden")
+        Layer(Dense(weights()), LeakyIntegrate(v=V_INITIAL, bias=OUTPUT_BIAS, tau_mem=TAU_MEM_MS, readout=READOUT),
+              shape=NUM_CLASSES, synapse=Exponential(TAU_SYN_MS), name="output")
     return network
 
 
-def compile_model(network):
-    """Prepare the training model with the stock EventProp and Adam defaults."""
-    compiler = EventPropCompiler(example_timesteps=TRIAL_STEPS,
-                                 losses="sparse_categorical_crossentropy",
-                                 backend="cuda")
-    return compiler.compile(network, name="DVSGesture")
+def compile_model(network, trial_steps=TRIAL_STEPS, *, whole=False):
+    """Compile stock EventProp with default Adam and an optional full-duration tape."""
+    # Two adjacent trials can each emit one spike per neuron per step.
+    if BATCH_SIZE != 1:
+        raise ValueError("This runner's input capacity and delayed-update order require batch size one")
+    compiler = EventPropCompiler(example_timesteps=trial_steps, losses=LOSS, backend=BACKEND,
+                                 dt=DT_MS, batch_size=BATCH_SIZE, rng_seed=GENN_SEED,
+                                 kernel_profiling=KERNEL_PROFILING, grad_limit=GRAD_LIMIT,
+                                 per_timestep_loss=PER_TIMESTEP_LOSS, softmax_temperature=SOFTMAX_TEMPERATURE,
+                                 max_spikes=tape_slots(trial_steps) if whole else PREFIX_TAPE_SLOTS,
+                                 strict_buffer_checking=whole)
+    adam = Adam(alpha=LEARNING_RATE, beta1=ADAM_BETA1, beta2=ADAM_BETA2, epsilon=ADAM_EPSILON)
+    return compiler.compile(network, name=MODEL_NAME, optimisers={"all_connections": {"weight": adam}})
+
+
+def tape_slots(steps):
+    return ADJACENT_TRIALS * steps + TAPE_SPARE_SLOTS
+
+
+def inference_compiler(steps):
+    return InferenceCompiler(evaluate_timesteps=steps, dt=DT_MS, backend=BACKEND,
+                             batch_size=BATCH_SIZE, rng_seed=GENN_SEED, kernel_profiling=KERNEL_PROFILING,
+                             reset_in_syn_between_batches=RESET_IN_SYN_BETWEEN_BATCHES)
 
 
 if __name__ == "__main__":
@@ -49,13 +118,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     network = build_model()
     shapes = [pop.shape for pop in network.populations]
-    expected = [INPUT_SHAPE, (15, 15, 16), (15, 15, 16), (7, 7, 8), (256,), (11,)]
-    if shapes != expected:
+    if shapes != [INPUT_SHAPE, *EXPECTED_CONV_SHAPES, (HIDDEN_UNITS,), (NUM_CLASSES,)]:
         raise ValueError(f"Unexpected population shapes: {shapes}")
     pooled = [conn.connectivity.pool_output_shape for conn in network.connections
               if isinstance(conn.connectivity, AvgPoolConv2D)]
-    if pooled != [(7, 7, 16), (3, 3, 8)]:
-        raise ValueError(f"Unexpected pooling shapes: {pooled}")
+    if tuple(pooled) != EXPECTED_POOL_SHAPES:
+        raise ValueError(f"Invalid network geometry: {shapes}, {pooled}")
     for pop in network.populations:
         print(f"{pop.name}: {pop.shape}")
     print(f"Fused pooling shapes: {pooled}")

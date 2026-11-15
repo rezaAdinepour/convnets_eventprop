@@ -1,4 +1,4 @@
-"""Load development parents and encode one 200 ms prefix per gesture."""
+"""Load DVS Gesture partitions and encode a prefix or a complete gesture."""
 
 from pathlib import Path
 
@@ -7,63 +7,102 @@ from ml_genn.utils.data import preprocess_tonic_spikes
 from tonic import transforms
 from tonic.datasets import DVSGesture
 
+from evdownsampling import BIN_US, NUM_POLARITIES, adaptive_spikes
 
-INPUT_SHAPE = (34, 34, 2)  # The 32 x 32 event field has a silent one-pixel border.
+# Edit this tuple to change the split. All other development subjects train.
+VALIDATION_SUBJECTS = (21, 22, 23)
+HISTORICAL_VALIDATION_SUBJECTS = (21, 22, 23)  # Checkpoints predating split metadata.
+DEVELOPMENT_SUBJECTS = range(1, 24)
+TEST_SUBJECTS = range(24, 30)
+DEVELOPMENT_RECORDINGS = 1077
+TEST_RECORDINGS = 264
+SENSOR_SIZE = 128
+SPATIAL_REDUCTION = 4
+FIELD_SIZE = SENSOR_SIZE // SPATIAL_REDUCTION
+BORDER = 1
+INPUT_SHAPE = (FIELD_SIZE + 2 * BORDER, FIELD_SIZE + 2 * BORDER, NUM_POLARITIES)
+DENOISE_US = 10_000
 TRIAL_STEPS = 200
-BIN_US = 1000
+NUM_CLASSES = 11
+OCCUPANCY = "occupancy"
+EVDOWNSAMPLING = "evdownsampling"
+PREPROCESSORS = (OCCUPANCY, EVDOWNSAMPLING)
 
 
-def load_development_split(data_root: Path):
-    """Return the Tonic dataset and deterministic train/validation indices."""
+def load_partition(data_root: Path, *, train: bool):
+    """Open an already extracted official partition in deterministic path order."""
     dataset_dir = data_root / "DVSGesture"
-    train_dir = dataset_dir / "ibmGestureTrain"
+    if train:
+        archive, folder, count = DVSGesture.train_filename, "ibmGestureTrain", DEVELOPMENT_RECORDINGS
+        users = DEVELOPMENT_SUBJECTS
+    else:
+        archive, folder, count = DVSGesture.test_filename, "ibmGestureTest", TEST_RECORDINGS
+        users = TEST_SUBJECTS
     # Tonic can download when either the archive or extracted files are missing.
-    if not (dataset_dir / DVSGesture.train_filename).is_file():
-        raise FileNotFoundError(f"Missing local training archive in {dataset_dir}")
-    if len(list(train_dir.glob("**/*.npy"))) != 1077:
-        raise ValueError(f"Expected 1077 extracted training parents in {train_dir}")
-
-    dataset = DVSGesture(save_to=str(data_root), train=True)
+    if not (dataset_dir / archive).is_file():
+        raise FileNotFoundError(dataset_dir / archive)
+    if len(list((dataset_dir / folder).glob("**/*.npy"))) != count:
+        raise ValueError(f"Expected {count} extracted parents in {folder}")
+    dataset = DVSGesture(save_to=str(data_root), train=train)
     paths = dataset.data
-    if len(paths) != 1077 or len(set(paths)) != 1077:
-        raise ValueError("Tonic must identify exactly 1077 distinct parent paths")
-    if set(dataset.users) != set(range(1, 24)):
-        raise ValueError("Expected official training subjects 1 through 23")
+    if len(paths) != count or len(set(paths)) != count or set(dataset.users) != set(users):
+        raise ValueError(f"Unexpected parent paths or subjects in {folder}")
+    if set(dataset.targets) != set(range(len(dataset.classes))):
+        raise ValueError(f"Unexpected class labels in {folder}")
+    return dataset, sorted(range(count), key=paths.__getitem__)
 
-    # Tonic's filesystem traversal order is not part of the split definition.
-    indices = sorted(range(len(dataset)), key=paths.__getitem__)
-    train = [i for i in indices if dataset.users[i] <= 20]
-    validation = [i for i in indices if dataset.users[i] >= 21]
-    if (len(train), len(validation)) != (934, 143):
-        raise ValueError(f"Unexpected split sizes: {len(train)}, {len(validation)}")
+
+def load_development_split(data_root: Path, validation_subjects=VALIDATION_SUBJECTS):
+    """Return the Tonic dataset and deterministic train/validation indices."""
+    held_out = set(validation_subjects)
+    if not held_out or not held_out < set(DEVELOPMENT_SUBJECTS):
+        raise ValueError("Validation subjects must form a nonempty proper subset of development subjects")
+    dataset, indices = load_partition(data_root, train=True)
+    train = [i for i in indices if dataset.users[i] not in held_out]
+    validation = [i for i in indices if dataset.users[i] in held_out]
     return dataset, train, validation
 
 
-def encode_parent(events):
-    """Return binary input spikes in ms and the number of in-window source events."""
+def encode_trial(events, *, whole=False, preprocessing=OCCUPANCY):
+    """Return binary spikes, retained event count and frame count before padding."""
     times = events["t"]
     if np.any(times[1:] < times[:-1]):
         raise ValueError("Parent timestamps must be nondecreasing")
-    if any(np.any((events[axis] < 0) | (events[axis] >= 128)) for axis in ("x", "y")):
-        raise ValueError("Event outside the 128 x 128 sensor")
+    if any(np.any((events[axis] < 0) | (events[axis] >= SENSOR_SIZE)) for axis in ("x", "y")):
+        raise ValueError("Event outside the sensor")
 
     if len(events):
-        events = transforms.Denoise(filter_time=10000)(events)
+        events = transforms.Denoise(filter_time=DENOISE_US)(events)
+    steps = 1 if whole else TRIAL_STEPS
     if len(events):
         times = events["t"]
-        stop = np.searchsorted(times, int(times[0]) + TRIAL_STEPS * BIN_US)
-        events = transforms.Downsample(spatial_factor=0.25)(events[:stop])
-        events["x"] += 1
-        events["y"] += 1
+        if whole:
+            # ToFrame(time_window=1000) uses complete half-open bins, at least one.
+            steps = max(1, (int(times[-1]) - int(times[0])) // BIN_US)
+        stop = np.searchsorted(times, int(times[0]) + steps * BIN_US)
+        events = transforms.Downsample(spatial_factor=1 / SPATIAL_REDUCTION)(events[:stop])
+        events["x"] += BORDER
+        events["y"] += BORDER
         events["t"] = ((events["t"] - events["t"][0]) // BIN_US) * BIN_US
 
     # One event per (x, y, polarity, bin). Keeping explicit bin starts also
     # preserves a spike in the last occupied millisecond.
-    occupied = np.unique(events)
-    spikes = preprocess_tonic_spikes(occupied, DVSGesture.ordering, INPUT_SHAPE)
+    if preprocessing == OCCUPANCY:
+        occupied = np.unique(events)
+        spikes = preprocess_tonic_spikes(occupied, DVSGesture.ordering, INPUT_SHAPE)
+    elif preprocessing == EVDOWNSAMPLING:
+        # Counts include repeated raw events before polarity cancellation.
+        spikes = adaptive_spikes(events, steps, INPUT_SHAPE)
+    else:
+        raise ValueError(f"Unknown preprocessing: {preprocessing}")
     if not np.isfinite(spikes.spike_times).all():
         raise ValueError("Nonfinite input spike time")
-    return spikes, len(events)
+    return spikes, len(events), steps
+
+
+def encode_parent(events):
+    spikes, count, _ = encode_trial(events)
+    return spikes, count
 
 
 if __name__ == "__main__":
@@ -74,8 +113,9 @@ if __name__ == "__main__":
     parser.add_argument("--example", action="store_true", help="Encode the first training parent")
     args = parser.parse_args()
     dataset, train, validation = load_development_split(args.data_root)
-    print(f"Train: {len(train)} parents, subjects 1-20")
-    print(f"Validation: {len(validation)} parents, subjects 21-23")
+    for name, indices in (("Train", train), ("Validation", validation)):
+        subjects = sorted({dataset.users[i] for i in indices})
+        print(f"{name}: {len(indices)} parents, subjects {subjects}")
     if args.example:
         index = train[0]
         events, label = dataset[index]
