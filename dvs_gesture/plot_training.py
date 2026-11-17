@@ -1,5 +1,3 @@
-"""Compare Base line and EvDownsampling using their per-epoch training logs."""
-
 import argparse
 import re
 from pathlib import Path

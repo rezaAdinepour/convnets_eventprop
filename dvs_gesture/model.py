@@ -1,5 +1,3 @@
-"""Construct the DVS Gesture network using public mlGeNN 3 layers."""
-
 from ml_genn import InputLayer, Layer, SequentialNetwork
 from ml_genn.compilers import EventPropCompiler, InferenceCompiler
 from ml_genn.connectivity import AvgPoolConv2D, Conv2D, Dense
@@ -36,8 +34,8 @@ ADAM_EPSILON = 1e-8
 GRAD_LIMIT = 100.0
 SOFTMAX_TEMPERATURE = 1.0
 PER_TIMESTEP_LOSS = False
-DT_MS = BIN_MS  # One simulation timestep per input bin.
-BATCH_SIZE = 1  # The delayed-update schedule and input allocation use one parent per batch.
+DT_MS = BIN_MS 
+BATCH_SIZE = 1
 GENN_SEED = 0
 BACKEND = "cuda"
 MODEL_NAME = "DVSGesture"
@@ -48,7 +46,6 @@ PREFIX_TAPE_SLOTS = 500
 ADJACENT_TRIALS = 2
 TAPE_SPARE_SLOTS = 2
 
-# Expected geometry of the recorded architecture for the standalone model check.
 EXPECTED_CONV_SHAPES = ((15, 15, CONV_FILTERS[0]), (15, 15, CONV_FILTERS[1]), (7, 7, CONV_FILTERS[2]))
 EXPECTED_POOL_SHAPES = ((7, 7, CONV_FILTERS[1]), (3, 3, CONV_FILTERS[2]))
 
@@ -84,7 +81,6 @@ def build_model(input_capacity=None):
 
 def compile_model(network, trial_steps=TRIAL_STEPS, *, whole=False):
     """Compile stock EventProp with default Adam and an optional full-duration tape."""
-    # Two adjacent trials can each emit one spike per neuron per step.
     if BATCH_SIZE != 1:
         raise ValueError("This runner's input capacity and delayed-update order require batch size one")
     compiler = EventPropCompiler(example_timesteps=trial_steps, losses=LOSS, backend=BACKEND,

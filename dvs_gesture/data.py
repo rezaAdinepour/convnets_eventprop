@@ -9,9 +9,8 @@ from tonic.datasets import DVSGesture
 
 from evdownsampling import BIN_US, NUM_POLARITIES, adaptive_spikes
 
-# Edit this tuple to change the split. All other development subjects train.
 VALIDATION_SUBJECTS = (21, 22, 23)
-HISTORICAL_VALIDATION_SUBJECTS = (21, 22, 23)  # Checkpoints predating split metadata.
+HISTORICAL_VALIDATION_SUBJECTS = (21, 22, 23)
 DEVELOPMENT_SUBJECTS = range(1, 24)
 TEST_SUBJECTS = range(24, 30)
 DEVELOPMENT_RECORDINGS = 1077

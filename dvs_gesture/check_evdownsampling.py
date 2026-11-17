@@ -1,5 +1,3 @@
-"""Compare the training encoder to the local candidate on a real training parent."""
-
 import argparse
 from pathlib import Path
 import sys
@@ -12,7 +10,7 @@ from data import (BORDER, DENOISE_US, EVDOWNSAMPLING, FIELD_SIZE, INPUT_SHAPE,
 from evdownsampling import BETA, BIN_MS, NUM_POLARITIES, TAU_ACCUMULATOR_MS, TAU_THETA_MS
 
 REFERENCE_FRAMES = 1024
-REFERENCE_BIN_MS = 1  # The independent candidate uses fixed 1 ms bins.
+REFERENCE_BIN_MS = 1
 
 
 def neuron_ids(spikes):
