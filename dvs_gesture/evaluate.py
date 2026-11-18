@@ -4,9 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 from ml_genn.serialisers import Numpy
+from tonic.datasets import DVSGesture
 
-from data import encode_recordings, load_dataset, max_spikes_per_batch, split_train_validation
+from data import (NUM_CLASSES, encode_recordings, load_dataset, max_spikes_per_batch,
+                  split_train_validation)
 from model import BATCH_SIZE, build_network, compile_for_inference
 
 
@@ -48,15 +51,33 @@ def main():
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     os.chdir(run_dir)
     compiled = compile_for_inference(network, timesteps)
+    output_pop = network.populations[-1]
     with compiled:
-        metrics, _ = compiled.evaluate({network.populations[0]: x},
-                                       {network.populations[-1]: y})
-    result = metrics[network.populations[-1]]
+        readout, _ = compiled.predict({network.populations[0]: x}, output_pop)
+    predicted = np.argmax(readout[output_pop], axis=1)
+    correct = predicted == y
 
     split = "Test" if args.test else "Validation"
-    print(f"Epoch {epoch}: {split} {result.correct}/{result.total} ({100 * result.result:.2f}%)")
+    print(f"Epoch {epoch}: {split} {correct.sum()}/{len(y)} ({100 * correct.mean():.2f}%)")
     if not args.test:
-        print(f"Logged during training: {logged_correct}/{result.total}")
+        print(f"Logged during training: {logged_correct}/{len(y)}")
+
+    subjects = np.array([dataset.users[i] for i in indices])
+    print("\nPer subject:")
+    for subject in np.unique(subjects):
+        mask = subjects == subject
+        print(f"  subject {subject:2d}: {correct[mask].sum():3d}/{mask.sum():3d} "
+              f"({100 * correct[mask].mean():.1f}%)")
+
+    confusion = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=int)
+    np.add.at(confusion, (y, predicted), 1)
+    print("\nPer class:")
+    for c, name in enumerate(DVSGesture.classes):
+        print(f"  {c:2d} {name:<16} {confusion[c, c]:3d}/{confusion[c].sum():3d}")
+    print("\nConfusion matrix (rows: true class, columns: predicted class):")
+    print("     " + "".join(f"{c:4d}" for c in range(NUM_CLASSES)))
+    for c in range(NUM_CLASSES):
+        print(f"  {c:2d} " + "".join(f"{n:4d}" for n in confusion[c]))
 
 
 if __name__ == "__main__":
