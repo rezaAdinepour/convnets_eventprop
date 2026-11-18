@@ -24,7 +24,8 @@ from ml_genn.serialisers import Numpy
 
 from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_batch,
                   max_spikes_per_neuron, split_train_validation)
-from model import BATCH_SIZE, GRAD_LIMIT, MAX_SPIKES, build_network, compile_for_training
+from model import (BATCH_SIZE, GRAD_LIMIT, MAX_SPIKES, REG_STRENGTH, REG_TARGET,
+                   build_network, compile_for_training)
 
 SEED = 0
 
@@ -90,7 +91,13 @@ def main():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT,
                         help="EventProp adjoint limit multiplier (default: mlGeNN's 100)")
+    parser.add_argument("--reg-target", type=float, default=REG_TARGET,
+                        help="SpikeCount target spikes per hidden neuron per gesture")
+    parser.add_argument("--reg-strength", type=float, nargs=2, default=REG_STRENGTH,
+                        metavar=("BELOW", "ABOVE"),
+                        help="SpikeCount strength below and above the target")
     args = parser.parse_args()
+    args.reg_strength = tuple(args.reg_strength)
 
     np.random.seed(SEED)  # train_validate(shuffle=True) uses NumPy's global RNG
 
@@ -125,12 +132,14 @@ def main():
     Path("run_config.json").write_text(json.dumps(dict(
         encoding=args.encoding, epochs=args.epochs, example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
-        grad_limit=args.grad_limit, seed=SEED), indent=2))
+        grad_limit=args.grad_limit, reg_target=args.reg_target,
+        reg_strength=args.reg_strength, seed=SEED), indent=2))
 
     network = build_network(input_buffer)
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
-    compiled = compile_for_training(network, example_timesteps, args.grad_limit)
+    compiled = compile_for_training(network, example_timesteps, args.grad_limit,
+                                    args.reg_strength, args.reg_target)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds"])

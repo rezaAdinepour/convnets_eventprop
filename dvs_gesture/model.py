@@ -5,6 +5,7 @@ from ml_genn.initializers import Normal
 from ml_genn.losses import SparseCategoricalCrossentropy
 from ml_genn.neurons import LeakyIntegrate, LeakyIntegrateFire, SpikeInput
 from ml_genn.optimisers import Adam
+from ml_genn.regularisers import SpikeCount
 from ml_genn.synapses import Exponential
 
 from data import INPUT_SHAPE, NUM_CLASSES
@@ -21,6 +22,11 @@ BATCH_SIZE = 32
 
 MAX_SPIKES = 6242
 GRAD_LIMIT = 100.0
+
+# Starting point from Jamie: target 100 spikes per neuron per gesture, strength
+# from examples/event_prop/shd.py. The strength needs to be explored.
+REG_TARGET = 100.0
+REG_STRENGTH = (1e-10, 1e-10)
 
 
 def build_network(max_input_spikes_per_batch):
@@ -49,7 +55,11 @@ def build_network(max_input_spikes_per_batch):
     return network
 
 
-def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT):
+def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
+                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET):
+    # SpikeCount pulls each hidden neuron's spike count per gesture towards
+    # reg_target; reg_strength is (below target, above target).
+    regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
         example_timesteps=example_timesteps,
         # record_key makes mlGeNN return the training loss of every batch.
@@ -58,7 +68,8 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT):
         strict_buffer_checking=True, grad_limit=grad_limit)
     adam = Adam(alpha=LEARNING_RATE)
     return compiler.compile(network, name="dvs_gesture_train",
-                            optimisers={"all_connections": {"weight": adam}})
+                            optimisers={"all_connections": {"weight": adam}},
+                            regularisers={"all_hidden_populations": regulariser})
 
 
 def compile_for_inference(network, example_timesteps):
