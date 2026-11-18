@@ -1,11 +1,15 @@
+import hashlib
+import inspect
+import os
 from pathlib import Path
 
 import numpy as np
-from ml_genn.utils.data import preprocess_tonic_spikes
+from ml_genn.utils.data import PreprocessedSpikes, preprocess_tonic_spikes
 from tonic import transforms
 from tonic.datasets import DVSGesture
 from tqdm import tqdm
 
+import evdownsampling
 from evdownsampling import BIN_MS, evdownsampling_spikes
 
 VALIDATION_SUBJECTS = (21, 22, 23)
@@ -79,8 +83,20 @@ def encode_gesture(events, encoding, trial_ms=None):
     return spikes, num_bins
 
 
-def encode_recordings(dataset, indices, encoding, description="Encoding", trial_ms=None):
-    """Encode the given recordings; return spikes, labels and lengths in bins."""
+def encode_recordings(dataset, indices, encoding, description="Encoding", trial_ms=None,
+                      cache_dir=None):
+    """Encode the given recordings; return spikes, labels and lengths in bins.
+
+    With cache_dir, the result is stored there and reused by later calls with
+    the same recordings, encoding, trial_ms and encoder code.
+    """
+    if cache_dir is not None:
+        key = _cache_key(dataset, indices, encoding, trial_ms)
+        cache_file = Path(cache_dir) / f"{encoding}_{trial_ms or 'full'}_{key}.npz"
+        if cache_file.exists():
+            print(f"{description}: loaded from {cache_file}")
+            return _load_cache(cache_file)
+
     spikes, labels, lengths = [], [], []
     for i in tqdm(indices, desc=description, unit="recording"):
         events, label = dataset[i]
@@ -88,7 +104,41 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
         spikes.append(s)
         labels.append(label)
         lengths.append(num_bins)
-    return spikes, np.array(labels), np.array(lengths)
+    labels, lengths = np.array(labels), np.array(lengths)
+
+    if cache_dir is not None:
+        _save_cache(cache_file, spikes, labels, lengths)
+        print(f"{description}: saved to {cache_file}")
+    return spikes, labels, lengths
+
+
+def _cache_key(dataset, indices, encoding, trial_ms):
+    """Hash of everything that determines the encoded spikes."""
+    key = hashlib.sha256()
+    key.update(repr((encoding, trial_ms, DENOISE_US, SPATIAL_FACTOR, BORDER, INPUT_SHAPE,
+                     [str(dataset.data[i]) for i in indices])).encode())
+    key.update(inspect.getsource(encode_gesture).encode())
+    key.update(Path(evdownsampling.__file__).read_bytes())
+    return key.hexdigest()[:16]
+
+
+def _save_cache(cache_file, spikes, labels, lengths):
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_file.with_suffix(".tmp.npz")
+    np.savez(temporary, labels=labels, lengths=lengths,
+             end_spikes=np.stack([s.end_spikes for s in spikes]),
+             spike_counts=np.array([len(s.spike_times) for s in spikes]),
+             spike_times=np.concatenate([s.spike_times for s in spikes]))
+    os.replace(temporary, cache_file)
+
+
+def _load_cache(cache_file):
+    with np.load(cache_file) as cache:
+        starts = np.concatenate(([0], np.cumsum(cache["spike_counts"])))
+        times = cache["spike_times"]
+        spikes = [PreprocessedSpikes(end, times[start:stop])
+                  for end, start, stop in zip(cache["end_spikes"], starts[:-1], starts[1:])]
+        return spikes, cache["labels"], cache["lengths"]
 
 
 def max_spikes_per_neuron(spikes):

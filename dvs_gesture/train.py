@@ -76,6 +76,8 @@ def main():
                         help="SpikeCount strength below and above the target")
     parser.add_argument("--trial-ms", type=int, default=None,
                         help="Compress every recording into this many ms (default: real time)")
+    parser.add_argument("--cache-dir", type=Path, default=None,
+                        help="Reuse encoded recordings stored in this directory")
     parser.add_argument("--seed", type=int, default=SEED,
                         help="Seed for weight initialisation and shuffling (must not be 0)")
     args = parser.parse_args()
@@ -87,10 +89,13 @@ def main():
 
     dataset = load_dataset(args.data_root.resolve(), train=True)
     train_idx, val_idx = split_train_validation(dataset)
+    cache_dir = args.cache_dir.resolve() if args.cache_dir else None
     train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
-                                                    "Encoding training", args.trial_ms)
+                                                    "Encoding training", args.trial_ms,
+                                                    cache_dir)
     val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
-                                              "Encoding validation", args.trial_ms)
+                                              "Encoding validation", args.trial_ms,
+                                              cache_dir)
 
     example_timesteps = int(max(train_len.max(), val_len.max()))
     input_buffer = max(max_spikes_per_batch(train_x, BATCH_SIZE),
@@ -112,7 +117,8 @@ def main():
         example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
-        reg_strength=args.reg_strength, seed=args.seed), indent=2))
+        reg_strength=args.reg_strength, seed=args.seed,
+        cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer)
     input_pop, output_pop = network.populations[0], network.populations[-1]

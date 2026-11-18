@@ -52,6 +52,12 @@ cd dvs_gesture
 ./run.sh --encoding occupancy --epochs 100
 ```
 
+Encoded recordings are cached in `Experiments/dvs_gesture_encoding_cache/`
+(override with `CACHE_DIR=...`), one file per split, encoding and `--trial-ms`.
+The file name contains a hash of the recordings, the preprocessing constants and
+the encoder code, so changing any of them creates a new cache file instead of
+reusing a stale one. `evaluate.py` uses the same cache.
+
 Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 `git_commit.txt`, `train.log` and a `train/` directory containing:
 
