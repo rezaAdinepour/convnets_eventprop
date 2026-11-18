@@ -1,49 +1,59 @@
+"""EvDownsampling input encoder (Ghosh, Nowotny and Knight, Eq. 1).
+
+Each downsampled pixel has a leaky accumulator of signed event counts and one
+adaptive threshold per polarity. When the accumulator crosses the threshold of
+either polarity the pixel emits one spike on that polarity channel and the
+accumulator is reset. Adapted from
+EvDownsampling/New_Approach_for_EvProp_CSNN/dvs_data.py.
+"""
+
 import numpy as np
 from ml_genn.utils.data import preprocess_spikes
 
-
 BIN_MS = 1
-MICROSECONDS_PER_MS = 1000
-BIN_US = BIN_MS * MICROSECONDS_PER_MS
 TAU_ACCUMULATOR_MS = 16.0
 TAU_THETA_MS = 420.0
 BETA = 1.2
-NUM_POLARITIES = 2
-PARAMETERS = dict(bin_ms=BIN_MS, tau_accumulator_ms=TAU_ACCUMULATOR_MS,
-                  tau_theta_ms=TAU_THETA_MS, beta=BETA)
 
 
-def adaptive_spikes(events, frames, shape):
-    """Encode one parent after shared denoising, spatial mapping and binning."""
-    height, width, channels = shape
-    pixels = height * width
-    bins = events["t"] // BIN_US
-    if channels != NUM_POLARITIES or np.any((bins < 0) | (bins >= frames)):
-        raise ValueError("Expected two polarities and in-window millisecond bins")
-    p = events["p"]
-    if np.any((p != 0) & (p != 1)):
-        raise ValueError("EvDownsampling requires binary polarity")
-    ids = (events["y"].astype(np.int64) * width + events["x"]) * channels + p
-    edges = np.searchsorted(bins, np.arange(frames + 1))
-    v = np.zeros(pixels, dtype=np.float64)
-    theta = np.zeros((channels, pixels), dtype=np.float64)
-    a = np.exp(-PARAMETERS["bin_ms"] / PARAMETERS["tau_accumulator_ms"])
-    rho = np.exp(-PARAMETERS["bin_ms"] / PARAMETERS["tau_theta_ms"])
-    spike_ids, times = [], []
-    for k, (start, stop) in enumerate(zip(edges[:-1], edges[1:])):
-        counts = np.bincount(ids[start:stop], minlength=channels * pixels).reshape(pixels, channels)
-        v *= 1.0 - a
-        v += a * (counts[:, 1] - counts[:, 0])
-        positive, negative = v > theta[1], -v > theta[0]
-        theta *= rho
-        for channel, mask in ((0, negative), (1, positive)):
-            theta[channel, mask] += PARAMETERS["beta"] * np.abs(v[mask]) * (1.0 - rho)
-        fired = np.flatnonzero(negative | positive)
+def evdownsampling_spikes(events, num_bins, shape):
+    """Encode events whose times are already shifted to start at zero (in us).
+
+    ``shape`` is (height, width, 2). Spike IDs use the same (y, x, p) layout
+    as ``preprocess_tonic_spikes`` so both encoders feed the same input layer.
+    """
+    height, width, num_polarities = shape
+    num_pixels = height * width
+    if num_polarities != 2 or not np.isin(events["p"], (0, 1)).all():
+        raise ValueError("EvDownsampling needs two polarities with values 0 and 1")
+
+    bins = events["t"] // (BIN_MS * 1000)
+    ids = (events["y"].astype(np.int64) * width + events["x"]) * 2 + events["p"]
+    bin_edges = np.searchsorted(bins, np.arange(num_bins + 1))
+
+    alpha = np.exp(-BIN_MS / TAU_ACCUMULATOR_MS)
+    rho = np.exp(-BIN_MS / TAU_THETA_MS)
+    accumulator = np.zeros(num_pixels)
+    threshold = np.zeros((2, num_pixels))  # [OFF, ON]
+
+    spike_ids, spike_times = [], []
+    for b in range(num_bins):
+        counts = np.bincount(ids[bin_edges[b]:bin_edges[b + 1]],
+                             minlength=2 * num_pixels).reshape(num_pixels, 2)
+        accumulator = (1.0 - alpha) * accumulator + alpha * (counts[:, 1] - counts[:, 0])
+        on = accumulator > threshold[1]
+        off = -accumulator > threshold[0]
+
+        threshold *= rho
+        threshold[0, off] += BETA * np.abs(accumulator[off]) * (1.0 - rho)
+        threshold[1, on] += BETA * np.abs(accumulator[on]) * (1.0 - rho)
+
+        fired = np.flatnonzero(on | off)
         if fired.size:
-            spike_ids.append(channels * fired + positive[fired])
-            times.append(np.full(fired.size, k * BIN_MS, dtype=np.float32))
-            v[fired] = 0.0
+            spike_ids.append(2 * fired + on[fired])
+            spike_times.append(np.full(fired.size, b * BIN_MS, dtype=np.float32))
+            accumulator[fired] = 0.0
 
-    ids_out = np.concatenate(spike_ids) if spike_ids else np.empty(0, dtype=np.int64)
-    times_out = np.concatenate(times) if times else np.empty(0, dtype=np.float32)
-    return preprocess_spikes(times_out, ids_out, pixels * channels)
+    if not spike_ids:
+        return preprocess_spikes(np.empty(0, np.float32), np.empty(0, np.int64), 2 * num_pixels)
+    return preprocess_spikes(np.concatenate(spike_times), np.concatenate(spike_ids), 2 * num_pixels)
