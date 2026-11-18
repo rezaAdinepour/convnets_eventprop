@@ -9,20 +9,23 @@ import numpy as np
 
 from ml_genn.metrics import SparseCategoricalAccuracy
 from ml_genn.serialisers import Numpy
+from ml_genn.utils.data import PreprocessedSpikes
 
 from data import (EVDOWNSAMPLING, HISTORICAL_VALIDATION_SUBJECTS, OCCUPANCY, PREPROCESSORS,
                   TRIAL_STEPS, VALIDATION_SUBJECTS, encode_trial, load_development_split, load_partition)
 from evdownsampling import PARAMETERS
-from model import MODEL_NAME, build_model, compile_model, inference_compiler, tape_slots
+from model import (BATCH_SIZE, BATCH_TAPE_SLOTS, GRAD_LIMIT, MODEL_NAME, SINGLE_EXAMPLE, STRICT_BUFFER_CHECKING,
+                   build_model, compile_model, inference_compiler, tape_slots)
+from training_log import epoch_callbacks, log_spikes, spike_callbacks
 
 SHUFFLE_SEED = 0
 PILOT_SEED = 0
 PILOT_TRAIN_PER_CLASS = 2
 PILOT_VALIDATION_PER_CLASS = 1
 PILOT_EPOCHS = 2
-SMOKE_TRAIN_PARENTS = 2
-SMOKE_VALIDATION_PARENTS = 1
-SMOKE_EPOCHS = 1
+SMOKE_TAIL_PARENTS = 6
+SMOKE_EPOCHS = 2
+INITIAL_HIDDEN_WEIGHT_SCALE = 1.0
 
 
 def mean_cross_entropy(scores, labels):
@@ -41,12 +44,20 @@ class CheckedAccuracy(SparseCategoricalAccuracy):
     def create_state(self):
         state = super().create_state()
         state.scores = []
+        state.loss_sum = 0.0
         return state
 
     def update(self, state, y_true, y_pred, communicator):
         # argmax can return a class even when the scores contain NaNs.
         if not np.isfinite(y_pred).all():
             raise FloatingPointError("Nonfinite model readout")
+        valid = ~np.ma.getmaskarray(y_true)
+        if np.any(y_pred[~valid] != 0):
+            raise RuntimeError("Silent padding produced nonzero logits in the bias-free model")
+        y_true, y_pred = np.asarray(y_true)[valid], y_pred[valid]
+        if len(y_true) == 0:
+            return
+        state.loss_sum += len(y_true) * mean_cross_entropy(y_pred, y_true)
         state.scores.append(y_pred.copy())
         super().update(state, y_true, y_pred, communicator)
 
@@ -94,8 +105,32 @@ def check_weights(checkpoints, network, previous, current, *, require_change=Tru
         raise RuntimeError(f"No stored weight changed between {previous} and {current}")
 
 
+def input_capacity(inputs, batch_size):
+    sizes = sorted((len(x.spike_times) for x in inputs), reverse=True)
+    return max(1, sum(sizes[:batch_size]))
+
+
+def training_epoch(inputs, labels, order, batch_size):
+    """Flush the stock one-batch-delayed backward pass before validation."""
+    ordered = [inputs[i] for i in order]
+    silent = PreprocessedSpikes(np.zeros_like(ordered[0].end_spikes), ordered[0].spike_times[:0])
+    # Fill the partial real batch, then start one final silent forward batch.
+    extra = (-len(order)) % batch_size + 1
+    targets = np.pad(labels[order], (0, extra))
+    # The compiler receives valid zero labels for silent lanes. Only real rows enter metrics.
+    targets = np.ma.array(targets, mask=np.arange(len(targets)) >= len(order))
+    return ordered + [silent] * extra, targets
+
+
 def run(data_root, run_dir, pilot, full_epochs=None, *, whole=False,
-        preprocessing=OCCUPANCY, initial_from=None):
+        preprocessing=OCCUPANCY, initial_from=None, batch_size=BATCH_SIZE, ring_slots=None,
+        activity_check=False, hidden_weight_scale=INITIAL_HIDDEN_WEIGHT_SCALE, grad_limit=GRAD_LIMIT):
+    if not np.isfinite(grad_limit) or grad_limit <= 0:
+        raise ValueError("grad_limit must be finite and positive")
+    if not np.isfinite(hidden_weight_scale) or hidden_weight_scale <= 0:
+        raise ValueError("Hidden weight scale must be finite and positive")
+    if hidden_weight_scale != INITIAL_HIDDEN_WEIGHT_SCALE and initial_from is None:
+        raise ValueError("Scaling requires --initial-from for a controlled initial-weight comparison")
     dataset, train_indices, val_indices = load_development_split(data_root.resolve())
     train_subjects = sorted(set(dataset.users[i] for i in train_indices))
     val_subjects = sorted(VALIDATION_SUBJECTS)
@@ -108,76 +143,136 @@ def run(data_root, run_dir, pilot, full_epochs=None, *, whole=False,
     os.chdir(run_dir)
     if pilot:
         train_indices, val_indices = pilot_indices(dataset, train_indices, val_indices)
-    elif full_epochs is not None:
-        # Mix subjects and labels while keeping the first full epoch reproducible.
-        np.random.default_rng(SHUFFLE_SEED).shuffle(train_indices)
-    elif not whole:
-        train_indices = train_indices[:SMOKE_TRAIN_PARENTS]
-        val_indices = val_indices[:SMOKE_VALIDATION_PARENTS]
+    elif full_epochs is None and not whole:
+        train_indices = train_indices[:batch_size + SMOKE_TAIL_PARENTS]
+        val_indices = val_indices[:batch_size + 1]
     train_x, train_y, train_lengths = encode_subset(
         dataset, train_indices, "train", whole=whole, preprocessing=preprocessing)
     val_x, val_y, val_lengths = encode_subset(
         dataset, val_indices, "validation", whole=whole, preprocessing=preprocessing)
     steps = int(max(train_lengths.max(), val_lengths.max()))
-    capacity = max(1, max(len(x.spike_times) for x in train_x + val_x)) if whole else None
+    capacity = max(input_capacity(train_x, batch_size), input_capacity(val_x, batch_size))
+    peak_input = max(int(np.diff(x.end_spikes.astype(np.int64), prepend=0).max())
+                     for x in train_x + val_x)
+    input_ring_bound = tape_slots(peak_input)
+    if ring_slots is None:
+        bound = tape_slots(steps)
+        ring_slots = bound if batch_size == SINGLE_EXAMPLE else max(input_ring_bound, min(bound, BATCH_TAPE_SLOTS))
+    print(f"Peak spikes at one input neuron in one gesture: {peak_input}")
+    if not activity_check and ring_slots < input_ring_bound:
+        raise ValueError(f"The two-gesture input bound is {input_ring_bound} ring slots; configured {ring_slots}.")
     protocol = dict(whole_gesture=whole, trial_steps=steps, input_capacity=capacity,
+                    grad_limit=grad_limit,
+                    initial_hidden_weight_scale=hidden_weight_scale,
+                    batch_size=batch_size, ring_slots=ring_slots, strict_buffer_checking=STRICT_BUFFER_CHECKING,
+                    peak_input_spikes_per_neuron=peak_input,
+                    input_ring_bound=input_ring_bound,
+                    training_order="seeded permutation each epoch; silent final forward batch",
+                    partial_batch_gradient_denominator=batch_size,
                     preprocessing=preprocessing, validation_subjects=val_subjects,
                     train_subjects=train_subjects, shuffle_seed=SHUFFLE_SEED)
     if preprocessing == EVDOWNSAMPLING:
         protocol["evdownsampling"] = dict(PARAMETERS)
     if initial_from is not None:
         protocol["initial_weights_from"] = str(initial_from)
-    if whole:
-        print(f"Development horizon: {steps} steps | Input capacity: {capacity} | Ring slots: {tape_slots(steps)}")
+    print(f"Development horizon: {steps} steps | Input capacity: {capacity}")
+    if not activity_check:
+        print(f"Ring slots: {ring_slots}")
     if whole and full_epochs is None:
-        # Exercise the production allocation and delayed update with two long parents.
-        longest = np.argsort(train_lengths, kind="stable")[-SMOKE_TRAIN_PARENTS:][::-1]
+        # Exercise the production allocation with long parents and a partial batch.
+        longest = np.argsort(train_lengths, kind="stable")[-(batch_size + SMOKE_TAIL_PARENTS):][::-1]
         train_indices = [train_indices[i] for i in longest]
         train_x, train_y = [train_x[i] for i in longest], train_y[longest]
-        v = int(val_lengths.argmax())
-        val_indices, val_x, val_y = [val_indices[v]], [val_x[v]], val_y[v:v + 1]
+        longest_val = np.argsort(val_lengths, kind="stable")[-(batch_size + 1):][::-1]
+        val_indices = [val_indices[i] for i in longest_val]
+        val_x, val_y = [val_x[i] for i in longest_val], val_y[longest_val]
 
     network = build_model(capacity)
+    for pop in network.populations[1:-1]:
+        pop.record_spikes = True
     if initial_from is not None:
         network.load(("initial",), initial_weights)
+        for connection in network.connections[:-1]:
+            connection.connectivity.weight = connection.connectivity.weight * hidden_weight_scale
+        print(f"Initial hidden weight scale: {hidden_weight_scale:g}")
     input_pop, output_pop = network.populations[0], network.populations[-1]
-    compiled = compile_model(network, steps, whole=whole)
+    if activity_check:
+        compiled = inference_compiler(steps, batch_size).compile(network, name=f"{MODEL_NAME}Activity")
+        summary = dict(initial_weights_from=str(initial_from), checkpoint="initial",
+                       initial_hidden_weight_scale=hidden_weight_scale,
+                       mode="frozen_initial_activity", trial_steps=steps, batch_size=batch_size,
+                       preprocessing=preprocessing, selection="longest gestures in each development split",
+                       input_capacity=capacity, peak_input_spikes_per_neuron=peak_input, splits={})
+        if preprocessing == EVDOWNSAMPLING:
+            summary["evdownsampling"] = dict(PARAMETERS)
+        with compiled:
+            assert_loaded_weights(compiled, network, initial_weights, "initial",
+                                  hidden_weight_scale=hidden_weight_scale)
+            print(f"Activity backend={compiled.genn_model.backend_name}, batch_size={batch_size}")
+            for split, inputs, labels, indices in (
+                    ("train", train_x, train_y, train_indices),
+                    ("validation", val_x, val_y, val_indices)):
+                predictions, recordings = compiled.predict(
+                    {input_pop: inputs}, output_pop, callbacks=spike_callbacks(network, len(inputs)))
+                scores = predictions[output_pop]
+                if not np.isfinite(scores).all():
+                    raise FloatingPointError("Nonfinite activity-check readout")
+                log_spikes(0, split, recordings, network, len(inputs))
+                counts = {name: np.asarray(values) for name, values in recordings.items()}
+                np.savez(f"{split}-spike-counts.npz", paths=[dataset.data[i] for i in indices],
+                         labels=labels, scores=scores, **counts)
+                summary["splits"][split] = {
+                    name: dict(max_spikes=int(values.max()), mean_spikes=float(values.mean()),
+                               silent_neuron_fraction=float(np.mean(~values.any(axis=0))))
+                    for name, values in counts.items()}
+                for name, values in summary["splits"][split].items():
+                    print(f"{split} {name}: max={values['max_spikes']} spikes/neuron/gesture, "
+                          f"mean={values['mean_spikes']:.3f}, "
+                          f"silent={values['silent_neuron_fraction']:.2%}")
+        Path("activity.json").write_text(json.dumps(summary, indent=2) + "\n")
+        print("Frozen initial activity check: OK")
+        return
+    compiled = compile_model(network, steps, whole=whole, batch_size=batch_size,
+                             ring_slots=ring_slots, grad_limit=grad_limit)
     checkpoints = Numpy("checkpoints")
     history = []
     previous = "initial"
     num_epochs = full_epochs if full_epochs is not None else (PILOT_EPOCHS if pilot else SMOKE_EPOCHS)
     rng = np.random.default_rng(SHUFFLE_SEED)
-    order = np.arange(len(train_y))
     with compiled:
+        print(f"Training backend={compiled.genn_model.backend_name}, batch_size={compiled.genn_model.batch_size}, "
+              f"strict_buffer_checking={STRICT_BUFFER_CHECKING}, grad_limit={grad_limit:g}")
         compiled.save((previous,), checkpoints)
         if initial_from is not None:
             for conn in network.connections:
                 actual = checkpoints.deserialise(("initial", conn, "weight"))
                 expected = initial_weights.deserialise(("initial", conn, "weight"))
+                if conn in network.connections[:-1]:
+                    expected = expected * hidden_weight_scale
                 if not np.isfinite(actual).all() or not np.array_equal(actual, expected):
                     raise ValueError(f"Initial weights differ in {conn}")
             print(f"Matched initial weights in {len(network.connections)} connections")
         for epoch in range(1, num_epochs + 1):
-            if epoch > 1:
-                if whole:
-                    # Give the previous final parent a backward pass, shuffle the rest.
-                    order = np.concatenate((order[-1:], rng.permutation(order[:-1])))
-                else:
-                    order = np.roll(order, 1)
-            train_metrics, val_metrics, _, _ = compiled.train_validate(
-                {input_pop: [train_x[i] for i in order]}, {output_pop: train_y[order]},
+            order = rng.permutation(len(train_y))
+            epoch_x, epoch_y = training_epoch(train_x, train_y, order, batch_size)
+            # Shuffle real parents above so the backward flush always stays last.
+            train_metrics, val_metrics, train_spikes, val_spikes = compiled.train_validate(
+                {input_pop: epoch_x}, {output_pop: epoch_y},
                 num_epochs=1, start_epoch=epoch - 1, shuffle=False,
                 validation_x={input_pop: val_x}, validation_y={output_pop: val_y},
-                metrics=CheckedAccuracy(), callbacks=[], validation_callbacks=[])
+                metrics=CheckedAccuracy(), callbacks=epoch_callbacks(network, "train", len(train_y)),
+                validation_callbacks=epoch_callbacks(network, "validation", len(val_y)))
             train = train_metrics[output_pop]
             val = val_metrics[output_pop]
             if train.total != len(train_y) or val.total != len(val_y):
                 raise RuntimeError("Metric totals do not match the supplied parents")
+            log_spikes(epoch, "train", train_spikes, network, len(train_y))
+            log_spikes(epoch, "validation", val_spikes, network, len(val_y))
             current = f"epoch{epoch}"
             compiled.save((current,), checkpoints)
             print(f"Epoch {epoch} | Online train: {train.correct}/{train.total} | "
                   f"Fixed-weight validation: {val.correct}/{val.total}")
-            train_ce = mean_cross_entropy(np.concatenate(train.scores), train_y[order])
+            train_ce = train.loss_sum / train.total
             scores = np.concatenate(val.scores)
             val_ce = mean_cross_entropy(scores, val_y)
             print(f"Online train CE: {train_ce:.6f} | Fixed-weight validation CE: {val_ce:.6f}")
@@ -195,7 +290,8 @@ def run(data_root, run_dir, pilot, full_epochs=None, *, whole=False,
                                 train_correct=int(train.correct), train_total=int(train.total),
                                 validation_correct=int(val.correct), validation_total=int(val.total),
                                 train_cross_entropy=train_ce, validation_cross_entropy=val_ce,
-                                final_training_parent=dataset.data[train_indices[order[-1]]]))
+                                final_training_parent=dataset.data[train_indices[order[-1]]],
+                                scheduled_updates=(len(order) + batch_size - 1) // batch_size))
             # max keeps the first epoch on a tie. Publish only checked checkpoints.
             best = max(history, key=lambda row: row["validation_correct"])
             lowest_loss = min(history, key=lambda row: row["validation_cross_entropy"])
@@ -214,9 +310,12 @@ def run(data_root, run_dir, pilot, full_epochs=None, *, whole=False,
         print("EventProp class pilot: OK" if pilot else "EventProp training smoke: OK")
 
 
-def assert_loaded_weights(compiled, network, weights, key):
+def assert_loaded_weights(compiled, network, weights, key, *,
+                          hidden_weight_scale=INITIAL_HIDDEN_WEIGHT_SCALE):
     for connection in network.connections:
         expected = weights.deserialise((key, connection, "weight"))
+        if connection in network.connections[:-1]:
+            expected = expected * hidden_weight_scale
         device_weight = compiled.connection_populations[connection].vars["g"]
         device_weight.pull_from_device()
         if not np.isfinite(expected).all() or not np.array_equal(device_weight.values, expected):
@@ -276,7 +375,8 @@ def validate_selected(data_root, run_dir, source_run, *, pilot, final_test=False
 
     run_dir.mkdir()
     os.chdir(run_dir)
-    compiler = inference_compiler(steps)
+    batch_size = protocol.get("batch_size", SINGLE_EXAMPLE)
+    compiler = inference_compiler(steps, batch_size)
     compiled = compiler.compile(network, name=MODEL_NAME)
     with compiled:
         assert_loaded_weights(compiled, network, weights, key)
@@ -311,8 +411,8 @@ def validate_selected(data_root, run_dir, source_run, *, pilot, final_test=False
         for horizon in np.unique(horizons):
             group = np.flatnonzero(horizons == horizon)
             inputs = [test_x[i] for i in group]
-            network.populations[0].neuron.max_spikes = max(1, max(len(x.spike_times) for x in inputs))
-            compiler = inference_compiler(int(horizon))
+            network.populations[0].neuron.max_spikes = input_capacity(inputs, batch_size)
+            compiler = inference_compiler(int(horizon), batch_size)
             test_model = compiler.compile(network, name=f"DVSGestureTest{horizon}")
             with test_model:
                 assert_loaded_weights(test_model, network, weights, key)
@@ -358,6 +458,8 @@ if __name__ == "__main__":
     parser.add_argument("data_root", type=Path, help="Parent of the DVSGesture directory")
     parser.add_argument("--run-dir", type=Path, required=True, help="New output directory")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--activity-check", action="store_true",
+                      help="Measure initial forward spikes on long gestures using inference")
     mode.add_argument("--pilot", action="store_true", help="Use all eleven classes for two epochs")
     mode.add_argument("--full-epoch", dest="full_epochs", action="store_const", const=1,
                       help="Run one fresh epoch on the full training split")
@@ -370,22 +472,52 @@ if __name__ == "__main__":
     mode.add_argument("--test-full", type=Path, metavar="TRAINING_RUN",
                       help="Verify the selected checkpoint on validation, then evaluate the official test set")
     parser.add_argument("--whole-gesture", action="store_true",
-                        help="Train on all complete frames per recording; alone, check two training parents")
+                        help="Use all complete frames; alone, run a short check with long recordings")
+    parser.add_argument("--batch-size", type=int, help=f"Training batch size (default: {BATCH_SIZE})")
+    parser.add_argument("--ring-slots", type=int, help="EventProp tape slots per neuron and batch lane")
+    parser.add_argument("--grad-limit", type=float,
+                        help=f"Multiplier for the adaptive adjoint bound (default: {GRAD_LIMIT:g})")
     parser.add_argument("--preprocessing", choices=PREPROCESSORS,
                         help="Fresh training encoder (default: occupancy); reload reads the saved protocol")
     parser.add_argument("--initial-from", type=Path, metavar="TRAINING_RUN",
                         help="Use the five pre-training weight arrays from this run with fresh Adam")
+    parser.add_argument("--hidden-weight-scale", type=float,
+                        help="Multiply the four hidden-layer initial weight arrays from --initial-from")
     args = parser.parse_args()
     if args.full_epochs is not None and args.full_epochs < 1:
         parser.error("--full-epochs must be at least 1")
+    if args.batch_size is not None and args.batch_size < 1:
+        parser.error("--batch-size must be positive")
+    if args.ring_slots is not None and args.ring_slots < 2:
+        parser.error("--ring-slots must be at least 2")
+    if args.grad_limit is not None and (not np.isfinite(args.grad_limit) or args.grad_limit <= 0):
+        parser.error("--grad-limit must be finite and positive")
+    if args.hidden_weight_scale is not None:
+        if not np.isfinite(args.hidden_weight_scale) or args.hidden_weight_scale <= 0:
+            parser.error("--hidden-weight-scale must be finite and positive")
+        if args.initial_from is None:
+            parser.error("--hidden-weight-scale requires --initial-from")
+    if args.activity_check and (not args.whole_gesture or args.initial_from is None):
+        parser.error("--activity-check requires --whole-gesture and --initial-from")
+    if args.activity_check and args.ring_slots is not None:
+        parser.error("--activity-check uses inference without an EventProp ring")
     source_run = args.validate_pilot or args.validate_full or args.test_full
+    if args.grad_limit is not None and (source_run or args.activity_check):
+        parser.error("--grad-limit applies only to fresh training")
     if source_run and (args.preprocessing is not None or args.initial_from is not None):
         parser.error("--preprocessing and --initial-from apply only to fresh training")
+    if source_run and (args.batch_size is not None or args.ring_slots is not None):
+        parser.error("Reload uses the saved training protocol")
     if args.whole_gesture and (source_run or args.pilot):
-        parser.error("--whole-gesture applies to fresh full training or a two-parent training check")
+        parser.error("--whole-gesture applies to fresh full training or a training check")
     if source_run is not None:
         validate_selected(args.data_root, args.run_dir, source_run,
                           pilot=args.validate_pilot is not None, final_test=args.test_full is not None)
     else:
         run(args.data_root, args.run_dir, args.pilot, args.full_epochs, whole=args.whole_gesture,
-            preprocessing=args.preprocessing or OCCUPANCY, initial_from=args.initial_from)
+            preprocessing=args.preprocessing or OCCUPANCY, initial_from=args.initial_from,
+            batch_size=args.batch_size or BATCH_SIZE, ring_slots=args.ring_slots,
+            activity_check=args.activity_check,
+            grad_limit=GRAD_LIMIT if args.grad_limit is None else args.grad_limit,
+            hidden_weight_scale=(INITIAL_HIDDEN_WEIGHT_SCALE if args.hidden_weight_scale is None
+                                 else args.hidden_weight_scale))

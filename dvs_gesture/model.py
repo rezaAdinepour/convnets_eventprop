@@ -35,7 +35,10 @@ GRAD_LIMIT = 100.0
 SOFTMAX_TEMPERATURE = 1.0
 PER_TIMESTEP_LOSS = False
 DT_MS = BIN_MS 
-BATCH_SIZE = 1
+BATCH_SIZE = 32
+SINGLE_EXAMPLE = 1
+STRICT_BUFFER_CHECKING = True
+BATCH_TAPE_SLOTS = 4096
 GENN_SEED = 0
 BACKEND = "cuda"
 MODEL_NAME = "DVSGesture"
@@ -79,16 +82,16 @@ def build_model(input_capacity=None):
     return network
 
 
-def compile_model(network, trial_steps=TRIAL_STEPS, *, whole=False):
-    """Compile stock EventProp with default Adam and an optional full-duration tape."""
-    if BATCH_SIZE != 1:
-        raise ValueError("This runner's input capacity and delayed-update order require batch size one")
+def compile_model(network, trial_steps=TRIAL_STEPS, *, whole=False,
+                  batch_size=SINGLE_EXAMPLE, ring_slots=None, grad_limit=GRAD_LIMIT):
+    """Single-example diagnostics retain their original tape allocation."""
+    if ring_slots is None:
+        ring_slots = tape_slots(trial_steps) if whole else PREFIX_TAPE_SLOTS
     compiler = EventPropCompiler(example_timesteps=trial_steps, losses=LOSS, backend=BACKEND,
-                                 dt=DT_MS, batch_size=BATCH_SIZE, rng_seed=GENN_SEED,
-                                 kernel_profiling=KERNEL_PROFILING, grad_limit=GRAD_LIMIT,
+                                 dt=DT_MS, batch_size=batch_size, rng_seed=GENN_SEED,
+                                 kernel_profiling=KERNEL_PROFILING, grad_limit=grad_limit,
                                  per_timestep_loss=PER_TIMESTEP_LOSS, softmax_temperature=SOFTMAX_TEMPERATURE,
-                                 max_spikes=tape_slots(trial_steps) if whole else PREFIX_TAPE_SLOTS,
-                                 strict_buffer_checking=whole)
+                                 max_spikes=ring_slots, strict_buffer_checking=STRICT_BUFFER_CHECKING)
     adam = Adam(alpha=LEARNING_RATE, beta1=ADAM_BETA1, beta2=ADAM_BETA2, epsilon=ADAM_EPSILON)
     return compiler.compile(network, name=MODEL_NAME, optimisers={"all_connections": {"weight": adam}})
 
@@ -97,9 +100,9 @@ def tape_slots(steps):
     return ADJACENT_TRIALS * steps + TAPE_SPARE_SLOTS
 
 
-def inference_compiler(steps):
+def inference_compiler(steps, batch_size=SINGLE_EXAMPLE):
     return InferenceCompiler(evaluate_timesteps=steps, dt=DT_MS, backend=BACKEND,
-                             batch_size=BATCH_SIZE, rng_seed=GENN_SEED, kernel_profiling=KERNEL_PROFILING,
+                             batch_size=batch_size, rng_seed=GENN_SEED, kernel_profiling=KERNEL_PROFILING,
                              reset_in_syn_between_batches=RESET_IN_SYN_BETWEEN_BATCHES)
 
 
