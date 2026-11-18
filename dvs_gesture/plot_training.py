@@ -1,10 +1,3 @@
-"""Plot validation accuracy and training loss for one or more runs.
-
-Usage:
-    python plot_training.py RUN_DIR [RUN_DIR ...] --output figures/
-Each RUN_DIR must contain the metrics.csv written by train.py.
-"""
-
 import argparse
 import csv
 from pathlib import Path

@@ -1,12 +1,3 @@
-"""EvDownsampling input encoder (Ghosh, Nowotny and Knight, Eq. 1).
-
-Each downsampled pixel has a leaky accumulator of signed event counts and one
-adaptive threshold per polarity. When the accumulator crosses the threshold of
-either polarity the pixel emits one spike on that polarity channel and the
-accumulator is reset. Adapted from
-EvDownsampling/New_Approach_for_EvProp_CSNN/dvs_data.py.
-"""
-
 import numpy as np
 from ml_genn.utils.data import preprocess_spikes
 

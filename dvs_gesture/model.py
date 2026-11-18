@@ -1,18 +1,3 @@
-"""ConvSNN for DVS Gesture, trained with mlGeNN's EventProp compiler.
-
-The layer sizes follow the surrogate-gradient reference model in
-deep-snn-deployment-on-spinnaker2-single-chip-using-nir (PTQ/Training/PTQ.py):
-
-    input   34x34x2
-    conv1   5x5, 16 filters, stride 2              -> 15x15x16
-    conv2   3x3, 16 filters, same padding          -> 15x15x16
-    conv3   2x2 sum-pool + 3x3, 8 filters, same    ->  7x7x8
-    hidden  2x2 sum-pool + 3x3, 256 filters, flat  ->  256
-    output  dense, 11 leaky integrators (no spikes)
-
-Pooling is fused into the following convolution with AvgPoolConv2D(sum=True).
-"""
-
 from ml_genn import InputLayer, Layer, SequentialNetwork
 from ml_genn.compilers import EventPropCompiler, InferenceCompiler
 from ml_genn.connectivity import AvgPoolConv2D, Conv2D, Dense
@@ -29,20 +14,13 @@ TAU_MEM_MS = 20.0
 TAU_SYN_MS = 5.0
 LEARNING_RATE = 0.001
 
-# The 100-epoch batch-size-1 runs used Normal(0, 1) for every layer. At that
-# scale some neurons fire >10,000 spikes per gesture, which does not fit in the
-# EventProp spike buffer at batch size 32. sd = 0.375 for the four spiking
-# layers is what the batch-32 run dvs_gesture_AcMYdMDZ used without overflowing.
 SPIKING_WEIGHT_SD = 0.375
 OUTPUT_WEIGHT_SD = 1.0
 
 BATCH_SIZE = 32
-# Spike-time slots per neuron (and per batch lane) for the backward pass. The
-# buffer holds the current and the previous trial, so a neuron may fire at
-# most about MAX_SPIKES / 2 times per gesture. 6242 is the largest value that
-# has been run at batch size 32 on the 16 GB RTX 4080.
+
 MAX_SPIKES = 6242
-GRAD_LIMIT = 100.0  # mlGeNN default
+GRAD_LIMIT = 100.0
 
 
 def build_network(max_input_spikes_per_batch):
@@ -84,8 +62,6 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT):
 
 
 def compile_for_inference(network, example_timesteps):
-    # EventProp clears synaptic input between trials; do the same here so a
-    # reloaded checkpoint gives the same validation predictions as in training.
     compiler = InferenceCompiler(evaluate_timesteps=example_timesteps,
                                  dt=BIN_MS, batch_size=BATCH_SIZE,
                                  reset_in_syn_between_batches=True)

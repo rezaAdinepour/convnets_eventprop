@@ -1,13 +1,3 @@
-"""Load DVS Gesture with Tonic and turn each recording into mlGeNN input spikes.
-
-Split (fixed by subject, so no person appears in two splits):
-    training    subjects 1-20   (934 recordings, from the official train set)
-    validation  subjects 21-23  (143 recordings, from the official train set)
-    test        subjects 24-29  (264 recordings, the official test set)
-
-Every recording is used in full (the "whole gesture"), binned at 1 ms.
-"""
-
 from pathlib import Path
 
 import numpy as np
@@ -60,8 +50,6 @@ def encode_gesture(events, encoding):
     if len(events) == 0:
         raise ValueError("Recording is empty after denoising")
 
-    # Keep only complete 1 ms bins (like tonic.ToFrame(time_window=1000)) and
-    # shift times so each trial starts at t = 0.
     bin_us = BIN_MS * 1000
     t0 = int(events["t"][0])
     num_bins = max(1, (int(events["t"][-1]) - t0) // bin_us)
