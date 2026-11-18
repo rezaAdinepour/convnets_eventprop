@@ -14,6 +14,7 @@ import numpy as np
 from ml_genn.utils.data import preprocess_tonic_spikes
 from tonic import transforms
 from tonic.datasets import DVSGesture
+from tqdm import tqdm
 
 from evdownsampling import BIN_MS, evdownsampling_spikes
 
@@ -79,10 +80,10 @@ def encode_gesture(events, encoding):
     return spikes, num_bins
 
 
-def encode_recordings(dataset, indices, encoding):
+def encode_recordings(dataset, indices, encoding, description="Encoding"):
     """Encode the given recordings; return spikes, labels and lengths in bins."""
     spikes, labels, lengths = [], [], []
-    for i in indices:
+    for i in tqdm(indices, desc=description, unit="recording"):
         events, label = dataset[i]
         s, num_bins = encode_gesture(events, encoding)
         spikes.append(s)

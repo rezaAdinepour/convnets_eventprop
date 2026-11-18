@@ -94,11 +94,12 @@ def main():
 
     np.random.seed(SEED)  # train_validate(shuffle=True) uses NumPy's global RNG
 
-    print("Encoding recordings...")
     dataset = load_dataset(args.data_root.resolve(), train=True)
     train_idx, val_idx = split_train_validation(dataset)
-    train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding)
-    val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding)
+    train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
+                                                    "Encoding training")
+    val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
+                                              "Encoding validation")
 
     # One trial length for all recordings: the longest one. Shorter recordings
     # are followed by silence.
@@ -110,8 +111,10 @@ def main():
     print(f"Trial: {example_timesteps} ms, input buffer: {input_buffer} spikes, "
           f"busiest input neuron: {peak_input} spikes per gesture")
 
-    # Input neurons share the per-neuron spike buffer with the hidden layers.
-    # strict_buffer_checking only guards hidden layers, so check inputs here.
+    # Input neurons store their spike times in the same MAX_SPIKES-slot buffer
+    # as hidden neurons, which holds the current and the previous trial.
+    # strict_buffer_checking would stop the run on overflow anyway, but
+    # possibly hours in; the input data is known now, so fail early instead.
     if 2 * peak_input + 2 > MAX_SPIKES:
         raise ValueError(f"An input neuron fires {peak_input} times; "
                          f"MAX_SPIKES={MAX_SPIKES} must be at least {2 * peak_input + 2}")
@@ -144,7 +147,8 @@ def main():
                 {input_pop: train_x}, {output_pop: train_y},
                 validation_x={input_pop: val_x}, validation_y={output_pop: val_y},
                 num_epochs=1, start_epoch=epoch, shuffle=True,
-                callbacks=[checkpoint, AdjointLimitLog(limit_log, hidden_layers),
+                callbacks=["batch_progress_bar", checkpoint,
+                           AdjointLimitLog(limit_log, hidden_layers),
                            *spike_recorders(hidden_layers, "train", len(train_x))],
                 validation_callbacks=spike_recorders(hidden_layers, "validation", len(val_x)))
 
