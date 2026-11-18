@@ -23,8 +23,6 @@ BATCH_SIZE = 32
 MAX_SPIKES = 6242
 GRAD_LIMIT = 100.0
 
-# Starting point from Jamie: target 100 spikes per neuron per gesture, strength
-# from examples/event_prop/shd.py. The strength needs to be explored.
 REG_TARGET = 100.0
 REG_STRENGTH = (1e-10, 1e-10)
 
@@ -57,12 +55,11 @@ def build_network(max_input_spikes_per_batch):
 
 def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
                          reg_strength=REG_STRENGTH, reg_target=REG_TARGET):
-    # SpikeCount pulls each hidden neuron's spike count per gesture towards
-    # reg_target; reg_strength is (below target, above target).
+
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
         example_timesteps=example_timesteps,
-        # record_key makes mlGeNN return the training loss of every batch.
+
         losses=SparseCategoricalCrossentropy(record_key="loss"),
         dt=BIN_MS, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         strict_buffer_checking=True, grad_limit=grad_limit)

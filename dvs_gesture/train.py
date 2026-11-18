@@ -1,16 +1,3 @@
-"""Train the DVS Gesture ConvSNN with EventProp and log every epoch to CSV.
-
-Each epoch:
-  * trains on the 934 training recordings in a new random order (shuffle=True),
-  * evaluates the 143 validation recordings with the updated weights,
-  * saves a checkpoint (checkpoints/<epoch>-<layer>-weight.npy),
-  * appends one row to metrics.csv and one row per layer to spikes.csv and
-    adjoint_limits.csv.
-
-Usage (from the dvs_gesture directory):
-    python train.py DATA_ROOT RUN_DIR [--encoding evdownsampling] [--epochs 100]
-"""
-
 import argparse
 import csv
 import json
@@ -45,13 +32,6 @@ class CSVLog:
 
 
 class AdjointLimitLog(Callback):
-    """Log the adaptive clamp mlGeNN applies to each hidden layer's adjoint jumps.
-
-    EventProp clips the jump of lambda_V at every spike to +/-LambdavLimit,
-    and recomputes the limit after each batch from the mean |lambda_V| of that
-    batch. If the limit reaches zero the layer receives no gradient any more,
-    so this is the first thing to look at if a layer's weights stop changing.
-    """
 
     def __init__(self, log, hidden_layers):
         self.log = log
@@ -99,7 +79,7 @@ def main():
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
 
-    np.random.seed(SEED)  # train_validate(shuffle=True) uses NumPy's global RNG
+    np.random.seed(SEED)
 
     dataset = load_dataset(args.data_root.resolve(), train=True)
     train_idx, val_idx = split_train_validation(dataset)
@@ -108,8 +88,6 @@ def main():
     val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
                                               "Encoding validation")
 
-    # One trial length for all recordings: the longest one. Shorter recordings
-    # are followed by silence.
     example_timesteps = int(max(train_len.max(), val_len.max()))
     input_buffer = max(max_spikes_per_batch(train_x, BATCH_SIZE),
                        max_spikes_per_batch(val_x, BATCH_SIZE))
@@ -118,17 +96,13 @@ def main():
     print(f"Trial: {example_timesteps} ms, input buffer: {input_buffer} spikes, "
           f"busiest input neuron: {peak_input} spikes per gesture")
 
-    # Input neurons store their spike times in the same MAX_SPIKES-slot buffer
-    # as hidden neurons, which holds the current and the previous trial.
-    # strict_buffer_checking would stop the run on overflow anyway, but
-    # possibly hours in; the input data is known now, so fail early instead.
     if 2 * peak_input + 2 > MAX_SPIKES:
         raise ValueError(f"An input neuron fires {peak_input} times; "
                          f"MAX_SPIKES={MAX_SPIKES} must be at least {2 * peak_input + 2}")
 
     args.run_dir.mkdir(parents=True)
     os.chdir(args.run_dir)
-    # evaluate.py reads this to rebuild the same network and trial length.
+
     Path("run_config.json").write_text(json.dumps(dict(
         encoding=args.encoding, epochs=args.epochs, example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
@@ -162,8 +136,7 @@ def main():
                 validation_callbacks=spike_recorders(hidden_layers, "validation", len(val_x)))
 
             train, val = train_metrics[output_pop], val_metrics[output_pop]
-            # Loss of each batch is recorded during the next batch's backward
-            # pass, so the last batch of the epoch is missing from this mean.
+
             train_loss = float(np.mean(train_data["loss"]))
             if not np.isfinite(train_loss):
                 raise FloatingPointError(f"Training loss is {train_loss} in epoch {epoch}")
