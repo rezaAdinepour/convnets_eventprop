@@ -19,6 +19,7 @@ SPIKING_WEIGHT_SD = 0.375
 OUTPUT_WEIGHT_SD = 1.0
 
 BATCH_SIZE = 32
+SEED = 1  # GeNN treats seed 0 as "pick a random seed"
 
 MAX_SPIKES = 6242
 GRAD_LIMIT = 100.0
@@ -54,7 +55,7 @@ def build_network(max_input_spikes_per_batch):
 
 
 def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
-                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET):
+                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED):
 
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
@@ -62,15 +63,15 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
 
         losses=SparseCategoricalCrossentropy(record_key="loss"),
         dt=BIN_MS, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
-        strict_buffer_checking=True, grad_limit=grad_limit)
+        strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)
     adam = Adam(alpha=LEARNING_RATE)
     return compiler.compile(network, name="dvs_gesture_train",
                             optimisers={"all_connections": {"weight": adam}},
                             regularisers={"all_hidden_populations": regulariser})
 
 
-def compile_for_inference(network, example_timesteps):
+def compile_for_inference(network, example_timesteps, seed=SEED):
     compiler = InferenceCompiler(evaluate_timesteps=example_timesteps,
                                  dt=BIN_MS, batch_size=BATCH_SIZE,
-                                 reset_in_syn_between_batches=True)
+                                 reset_in_syn_between_batches=True, rng_seed=seed)
     return compiler.compile(network, name="dvs_gesture_inference")

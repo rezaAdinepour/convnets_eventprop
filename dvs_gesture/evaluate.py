@@ -35,7 +35,8 @@ def main():
     else:
         dataset = load_dataset(args.data_root.resolve(), train=True)
         _, indices = split_train_validation(dataset)
-    x, y, lengths = encode_recordings(dataset, indices, config["encoding"])
+    x, y, lengths = encode_recordings(dataset, indices, config["encoding"],
+                                      trial_ms=config.get("trial_ms"))
 
     timesteps = config["example_timesteps"]
     if lengths.max() > timesteps:

@@ -26,8 +26,11 @@ PyGeNN 5.5.0 and Tonic 1.5.0.
   21-23 for validation (143). The official test set (subjects 24-29, 264) is only
   used by `evaluate.py --test`.
 * Denoise (10 ms), downsample 128x128 to 32x32, add a one-pixel silent border (34x34x2).
-* Whole recordings at 1 ms bins. All trials last as long as the longest
-  recording (18,454 ms); shorter recordings are followed by silence.
+* Whole recordings at 1 ms bins. By default all trials last as long as the longest
+  recording (18,454 ms) and shorter recordings are followed by silence.
+  `--trial-ms T` instead compresses (or stretches) every recording linearly into
+  exactly T ms before encoding, so each gesture fills the whole trial. Time
+  constants (neurons and EvDownsampling) then act on compressed time.
 * `--encoding occupancy` (default): one spike per pixel, polarity and 1 ms bin that
   contains at least one event. `--encoding evdownsampling`: adaptive-threshold encoder.
 
@@ -81,3 +84,9 @@ small; once a layer's clipped jumps are all zero, the next limit is zero too and
 that layer (and every layer before it) receives no gradient for the rest of
 training. A batch-4 run with `--grad-limit 1000` (`dvs_gesture_mDpU3kNE`) kept
 all layers changing for 100 epochs.
+
+At batch size 32, `--grad-limit 1000` only delays this: in a 200-epoch run
+(`dvs_gesture_b32_20261118_154008`) the conv1/conv2 limits fell from ~2.5e-8
+(epoch 40) to ~9e-12 (epoch 199), conv2 activity fell from ~7 to ~1.5 spikes per
+neuron, and validation accuracy dropped from 108/143 (epoch 63) to ~101/143.
+Shorter trials (`--trial-ms`) are the current attempt to avoid it.

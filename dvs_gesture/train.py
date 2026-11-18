@@ -11,10 +11,8 @@ from ml_genn.serialisers import Numpy
 
 from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_batch,
                   max_spikes_per_neuron, split_train_validation)
-from model import (BATCH_SIZE, GRAD_LIMIT, MAX_SPIKES, REG_STRENGTH, REG_TARGET,
+from model import (BATCH_SIZE, GRAD_LIMIT, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED,
                    build_network, compile_for_training)
-
-SEED = 0
 
 
 class CSVLog:
@@ -76,17 +74,23 @@ def main():
     parser.add_argument("--reg-strength", type=float, nargs=2, default=REG_STRENGTH,
                         metavar=("BELOW", "ABOVE"),
                         help="SpikeCount strength below and above the target")
+    parser.add_argument("--trial-ms", type=int, default=None,
+                        help="Compress every recording into this many ms (default: real time)")
+    parser.add_argument("--seed", type=int, default=SEED,
+                        help="Seed for weight initialisation and shuffling (must not be 0)")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
+    if args.seed == 0:
+        parser.error("--seed 0 makes GeNN pick a random seed")
 
-    np.random.seed(SEED)
+    np.random.seed(args.seed)
 
     dataset = load_dataset(args.data_root.resolve(), train=True)
     train_idx, val_idx = split_train_validation(dataset)
     train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
-                                                    "Encoding training")
+                                                    "Encoding training", args.trial_ms)
     val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
-                                              "Encoding validation")
+                                              "Encoding validation", args.trial_ms)
 
     example_timesteps = int(max(train_len.max(), val_len.max()))
     input_buffer = max(max_spikes_per_batch(train_x, BATCH_SIZE),
@@ -104,16 +108,17 @@ def main():
     os.chdir(args.run_dir)
 
     Path("run_config.json").write_text(json.dumps(dict(
-        encoding=args.encoding, epochs=args.epochs, example_timesteps=example_timesteps,
+        encoding=args.encoding, trial_ms=args.trial_ms, epochs=args.epochs,
+        example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
-        reg_strength=args.reg_strength, seed=SEED), indent=2))
+        reg_strength=args.reg_strength, seed=args.seed), indent=2))
 
     network = build_network(input_buffer)
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,
-                                    args.reg_strength, args.reg_target)
+                                    args.reg_strength, args.reg_target, args.seed)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds"])
