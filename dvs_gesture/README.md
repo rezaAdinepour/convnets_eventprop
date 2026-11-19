@@ -31,6 +31,9 @@ PyGeNN 5.5.0 and Tonic 1.5.0.
   `--trial-ms T` instead compresses (or stretches) every recording linearly into
   exactly T ms before encoding, so each gesture fills the whole trial. Time
   constants (neurons and EvDownsampling) then act on compressed time.
+  `--crop-ms T` instead keeps only the first T ms of each recording in real time
+  (from its first event, before denoising); recordings shorter than T are followed
+  by silence. `--trial-ms` and `--crop-ms` cannot be combined.
 * `--encoding occupancy` (default): one spike per pixel, polarity and 1 ms bin that
   contains at least one event. `--encoding evdownsampling`: adaptive-threshold encoder.
 
@@ -53,7 +56,7 @@ cd dvs_gesture
 ```
 
 Encoded recordings are cached in `Experiments/dvs_gesture_encoding_cache/`
-(override with `CACHE_DIR=...`), one file per split, encoding and `--trial-ms`.
+(override with `CACHE_DIR=...`), one file per split, encoding and `--trial-ms` / `--crop-ms`.
 The file name contains a hash of the recordings, the preprocessing constants and
 the encoder code, so changing any of them creates a new cache file instead of
 reusing a stale one. `evaluate.py` uses the same cache.

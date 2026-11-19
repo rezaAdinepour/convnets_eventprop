@@ -40,7 +40,8 @@ def main():
         _, indices = split_train_validation(dataset)
     x, y, lengths = encode_recordings(dataset, indices, config["encoding"],
                                       trial_ms=config.get("trial_ms"),
-                                      cache_dir=config.get("cache_dir"))
+                                      cache_dir=config.get("cache_dir"),
+                                      crop_ms=config.get("crop_ms"))
 
     timesteps = config["example_timesteps"]
     if lengths.max() > timesteps:

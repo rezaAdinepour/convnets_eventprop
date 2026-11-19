@@ -83,16 +83,27 @@ def encode_gesture(events, encoding, trial_ms=None):
     return spikes, num_bins
 
 
+def crop_events(events, crop_ms):
+    """Keep the first crop_ms ms of real time, starting at the first event."""
+    return events[events["t"] < events["t"][0] + crop_ms * 1000]
+
+
 def encode_recordings(dataset, indices, encoding, description="Encoding", trial_ms=None,
-                      cache_dir=None):
+                      cache_dir=None, crop_ms=None):
     """Encode the given recordings; return spikes, labels and lengths in bins.
 
+    crop_ms keeps only the first crop_ms ms of each recording in real time
+    (instead of compressing it with trial_ms).
+
     With cache_dir, the result is stored there and reused by later calls with
-    the same recordings, encoding, trial_ms and encoder code.
+    the same recordings, encoding, trial_ms, crop_ms and encoder code.
     """
+    if trial_ms is not None and crop_ms is not None:
+        raise ValueError("Use either trial_ms or crop_ms, not both")
     if cache_dir is not None:
-        key = _cache_key(dataset, indices, encoding, trial_ms)
-        cache_file = Path(cache_dir) / f"{encoding}_{trial_ms or 'full'}_{key}.npz"
+        key = _cache_key(dataset, indices, encoding, trial_ms, crop_ms)
+        length = f"crop{crop_ms}" if crop_ms is not None else (trial_ms or "full")
+        cache_file = Path(cache_dir) / f"{encoding}_{length}_{key}.npz"
         if cache_file.exists():
             print(f"{description}: loaded from {cache_file}")
             return _load_cache(cache_file)
@@ -100,6 +111,8 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
     spikes, labels, lengths = [], [], []
     for i in tqdm(indices, desc=description, unit="recording"):
         events, label = dataset[i]
+        if crop_ms is not None:
+            events = crop_events(events, crop_ms)
         s, num_bins = encode_gesture(events, encoding, trial_ms)
         spikes.append(s)
         labels.append(label)
@@ -112,13 +125,16 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
     return spikes, labels, lengths
 
 
-def _cache_key(dataset, indices, encoding, trial_ms):
+def _cache_key(dataset, indices, encoding, trial_ms, crop_ms=None):
     """Hash of everything that determines the encoded spikes."""
     key = hashlib.sha256()
     key.update(repr((encoding, trial_ms, DENOISE_US, SPATIAL_FACTOR, BORDER, INPUT_SHAPE,
                      [str(dataset.data[i]) for i in indices])).encode())
     key.update(inspect.getsource(encode_gesture).encode())
     key.update(Path(evdownsampling.__file__).read_bytes())
+    if crop_ms is not None:
+        key.update(repr(crop_ms).encode())
+        key.update(inspect.getsource(crop_events).encode())
     return key.hexdigest()[:16]
 
 

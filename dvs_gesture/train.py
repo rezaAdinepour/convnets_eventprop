@@ -74,8 +74,11 @@ def main():
     parser.add_argument("--reg-strength", type=float, nargs=2, default=REG_STRENGTH,
                         metavar=("BELOW", "ABOVE"),
                         help="SpikeCount strength below and above the target")
-    parser.add_argument("--trial-ms", type=int, default=None,
+    length = parser.add_mutually_exclusive_group()
+    length.add_argument("--trial-ms", type=int, default=None,
                         help="Compress every recording into this many ms (default: real time)")
+    length.add_argument("--crop-ms", type=int, default=None,
+                        help="Keep only the first this many ms of every recording, in real time")
     parser.add_argument("--cache-dir", type=Path, default=None,
                         help="Reuse encoded recordings stored in this directory")
     parser.add_argument("--seed", type=int, default=SEED,
@@ -92,10 +95,10 @@ def main():
     cache_dir = args.cache_dir.resolve() if args.cache_dir else None
     train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
                                                     "Encoding training", args.trial_ms,
-                                                    cache_dir)
+                                                    cache_dir, args.crop_ms)
     val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
                                               "Encoding validation", args.trial_ms,
-                                              cache_dir)
+                                              cache_dir, args.crop_ms)
 
     example_timesteps = int(max(train_len.max(), val_len.max()))
     input_buffer = max(max_spikes_per_batch(train_x, BATCH_SIZE),
@@ -113,7 +116,8 @@ def main():
     os.chdir(args.run_dir)
 
     Path("run_config.json").write_text(json.dumps(dict(
-        encoding=args.encoding, trial_ms=args.trial_ms, epochs=args.epochs,
+        encoding=args.encoding, trial_ms=args.trial_ms, crop_ms=args.crop_ms,
+        epochs=args.epochs,
         example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
