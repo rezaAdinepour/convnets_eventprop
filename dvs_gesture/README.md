@@ -72,6 +72,10 @@ Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 | `adjoint_limits.csv` | Per epoch and hidden layer: EventProp's adaptive adjoint clamp `LambdavLimit` |
 | `checkpoints/` | Weights after every epoch (`<epoch>-<layer>-weight.npy`) and before training (`initial-...`) |
 
+`--train-all` trains on all 23 training subjects (1077 recordings) without
+validation; choose `--epochs` beforehand from validation runs. `evaluate.py`
+then uses the last epoch and only accepts `--test`.
+
 Evaluate the best epoch (most correct validation predictions, earliest on a tie):
 
 ```bash

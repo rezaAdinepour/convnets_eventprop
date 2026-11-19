@@ -30,7 +30,12 @@ def main():
 
     run_dir = args.run_dir.resolve()
     config = json.loads((run_dir / "run_config.json").read_text())
-    epoch, logged_correct = best_epoch(run_dir)
+    if config.get("train_all"):
+        if not args.test:
+            parser.error("This run trained on the validation subjects; use --test")
+        epoch = config["epochs"] - 1
+    else:
+        epoch, logged_correct = best_epoch(run_dir)
 
     if args.test:
         dataset = load_dataset(args.data_root.resolve(), train=False)

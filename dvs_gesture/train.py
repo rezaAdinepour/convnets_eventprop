@@ -83,6 +83,8 @@ def main():
                         help="Reuse encoded recordings stored in this directory")
     parser.add_argument("--seed", type=int, default=SEED,
                         help="Seed for weight initialisation and shuffling (must not be 0)")
+    parser.add_argument("--train-all", action="store_true",
+                        help="Train on all official training subjects, without validation")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
     if args.seed == 0:
@@ -101,6 +103,10 @@ def main():
                                               cache_dir, args.crop_ms)
 
     example_timesteps = int(max(train_len.max(), val_len.max()))
+    if args.train_all:
+        train_x = train_x + val_x
+        train_y = np.concatenate((train_y, val_y))
+        val_x, val_y = [], val_y[:0]
     input_buffer = max(max_spikes_per_batch(train_x, BATCH_SIZE),
                        max_spikes_per_batch(val_x, BATCH_SIZE))
     peak_input = max_spikes_per_neuron(train_x + val_x)
@@ -121,7 +127,7 @@ def main():
         example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
-        reg_strength=args.reg_strength, seed=args.seed,
+        reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer)
@@ -141,27 +147,40 @@ def main():
         compiled.save(("initial",), Numpy("checkpoints"))
         for epoch in range(args.epochs):
             start = perf_counter()
-            train_metrics, val_metrics, train_data, val_data = compiled.train_validate(
-                {input_pop: train_x}, {output_pop: train_y},
-                validation_x={input_pop: val_x}, validation_y={output_pop: val_y},
-                num_epochs=1, start_epoch=epoch, shuffle=True,
-                callbacks=["batch_progress_bar", checkpoint,
-                           AdjointLimitLog(limit_log, hidden_layers),
-                           *spike_recorders(hidden_layers, "train", len(train_x))],
-                validation_callbacks=spike_recorders(hidden_layers, "validation", len(val_x)))
+            callbacks = ["batch_progress_bar", checkpoint,
+                         AdjointLimitLog(limit_log, hidden_layers),
+                         *spike_recorders(hidden_layers, "train", len(train_x))]
+            if args.train_all:
+                train_metrics, train_data = compiled.train(
+                    {input_pop: train_x}, {output_pop: train_y},
+                    num_epochs=1, start_epoch=epoch, shuffle=True, callbacks=callbacks)
+                val_metrics, val_data = None, None
+            else:
+                train_metrics, val_metrics, train_data, val_data = compiled.train_validate(
+                    {input_pop: train_x}, {output_pop: train_y},
+                    validation_x={input_pop: val_x}, validation_y={output_pop: val_y},
+                    num_epochs=1, start_epoch=epoch, shuffle=True, callbacks=callbacks,
+                    validation_callbacks=spike_recorders(hidden_layers, "validation",
+                                                         len(val_x)))
 
-            train, val = train_metrics[output_pop], val_metrics[output_pop]
+            train = train_metrics[output_pop]
 
             train_loss = float(np.mean(train_data["loss"]))
             if not np.isfinite(train_loss):
                 raise FloatingPointError(f"Training loss is {train_loss} in epoch {epoch}")
+            val_correct = val_total = ""
+            if val_metrics is not None:
+                val_correct = val_metrics[output_pop].correct
+                val_total = val_metrics[output_pop].total
             metrics_log.write(epoch=epoch, train_correct=train.correct, train_total=train.total,
-                              train_loss=train_loss, val_correct=val.correct, val_total=val.total,
-                              seconds=round(perf_counter() - start, 1))
+                              train_loss=train_loss, val_correct=val_correct,
+                              val_total=val_total, seconds=round(perf_counter() - start, 1))
             log_spike_counts(spikes_log, epoch, "train", train_data, hidden_layers)
-            log_spike_counts(spikes_log, epoch, "validation", val_data, hidden_layers)
-            print(f"Epoch {epoch}: train {train.correct}/{train.total}, "
-                  f"validation {val.correct}/{val.total}, train loss {train_loss:.4f}")
+            if val_data is not None:
+                log_spike_counts(spikes_log, epoch, "validation", val_data, hidden_layers)
+            validation = f", validation {val_correct}/{val_total}" if val_total else ""
+            print(f"Epoch {epoch}: train {train.correct}/{train.total}{validation}, "
+                  f"train loss {train_loss:.4f}")
 
 
 if __name__ == "__main__":
