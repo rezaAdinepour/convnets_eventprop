@@ -19,7 +19,7 @@ SPIKING_WEIGHT_SD = 0.375
 OUTPUT_WEIGHT_SD = 1.0
 
 BATCH_SIZE = 32
-SEED = 1  # GeNN treats seed 0 as "pick a random seed"
+SEED = 1
 
 MAX_SPIKES = 6242
 GRAD_LIMIT = 100.0
