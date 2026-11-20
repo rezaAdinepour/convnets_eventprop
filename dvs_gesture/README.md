@@ -108,7 +108,8 @@ Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 | `run_config.json` | Encoding, trial length, buffer sizes, grad limit, seed |
 | `metrics.csv` | Per epoch: train and validation correct/total, mean training loss, seconds |
 | `spikes.csv` | Per epoch, split and hidden layer: mean and max spikes per neuron per gesture, fraction of silent neurons |
-| `adjoint_limits.csv` | Per epoch and hidden layer: EventProp's adaptive adjoint clamp `LambdavLimit` |
+| `adjoint_limits.csv` | Per epoch and hidden layer: EventProp's adaptive adjoint clamp `LambdavLimit`, and the fraction of (neuron, example) pairs whose lambda_V was zero for the whole backward pass (from `LambdavAbsSum`, averaged over batches) |
+| `lambda_trace.csv` | Only with `--lambda-epochs`: for the first training example of those epochs, per hidden layer, the clamp used, its forward spikes, the fraction of (timestep, neuron) entries with lambda_V = 0, neurons with lambda_V = 0 throughout, jumps clipped to exactly +/-`LambdavLimit` (total and per forward spike), and median / max abs lambda_V |
 | `checkpoints/` | Weights after every epoch (`<epoch>-<layer>-weight.npy`) and before training (`initial-...`) |
 
 `--train-all` trains on all 23 training subjects (1077 recordings) without
@@ -142,3 +143,15 @@ At batch size 32, `--grad-limit 1000` only delays this: in a 200-epoch run
 (epoch 40) to ~9e-12 (epoch 199), conv2 activity fell from ~7 to ~1.5 spikes per
 neuron, and validation accuracy dropped from 108/143 (epoch 63) to ~101/143.
 Shorter trials (`--trial-ms`) are the current attempt to avoid it.
+
+Because the limit is divided by the number of timesteps, the same `grad_limit` is
+about 9x tighter on whole real-time trials (18,454 steps) than on 2000 ms trials.
+EvDownsampling, real time, regulariser 1e-8, grad limit 100, seed 1, 100 epochs:
+
+| Run | Trial | Best validation | Last-20 mean | Last train | conv1 `LambdavLimit` (epochs 9 / 99) |
+| --- | --- | --- | --- | --- | --- |
+| `dvs_gesture_b32_20261120_144157` | whole recording, 18,454 ms | 95/143 (epoch 58) | 86.5 | 68.4% | 6.3e-11 / 3.7e-28 |
+| `dvs_gesture_b32_20261120_131943` | first 2000 ms (`--crop-ms 2000`) | 113/143 (epoch 83) | 107.4 | 88.8% | 1.7e-5 / 1.8e-5 |
+
+On whole trials the conv1 limit shrinks by about 80x every 10 epochs; on 2000 ms
+trials all limits stay at 1e-5 to 6e-5.

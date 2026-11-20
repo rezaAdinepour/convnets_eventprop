@@ -6,7 +6,7 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-from ml_genn.callbacks import Callback, Checkpoint, SpikeRecorder
+from ml_genn.callbacks import Callback, Checkpoint, SpikeRecorder, VarRecorder
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
@@ -31,19 +31,75 @@ class CSVLog:
 
 
 class AdjointLimitLog(Callback):
+    """Log LambdavLimit and the fraction of neurons whose lambda_V stayed zero."""
 
     def __init__(self, log, hidden_layers):
         self.log = log
         self.hidden_layers = hidden_layers
 
     def create_state(self, compiled_network, **kwargs):
+        self.pops = [compiled_network.neuron_populations[layer] for layer in self.hidden_layers]
+        self.zero = np.zeros(len(self.pops))
+        self.batches = 0
         return compiled_network
 
+    def on_batch_end(self, compiled_network, batch, metrics):
+        # LambdavAbsSum = sum over the previous batch's backward pass of |lambda_V|
+        # (reset at batch begin); batch 0 is skipped, as by mlGeNN's limit update.
+        if batch == 0:
+            return
+        for i, pop in enumerate(self.pops):
+            abs_sum = pop.vars["LambdavAbsSum"]
+            abs_sum.pull_from_device()
+            self.zero[i] += np.mean(abs_sum.view == 0)
+        self.batches += 1
+
     def on_epoch_end(self, compiled_network, epoch, metrics):
-        for layer in self.hidden_layers:
-            limit = compiled_network.neuron_populations[layer].vars["LambdavLimit"]
+        for layer, pop, zero in zip(self.hidden_layers, self.pops, self.zero):
+            limit = pop.vars["LambdavLimit"]
             limit.pull_from_device()
-            self.log.write(epoch=epoch, layer=layer.name, limit=float(np.max(limit.values)))
+            self.log.write(epoch=epoch, layer=layer.name, limit=float(np.max(limit.values)),
+                           zero_fraction=zero / max(self.batches, 1))
+
+
+class BackwardLimitRecorder(Callback):
+    """Store each layer's LambdavLimit used during batch 1."""
+
+    def __init__(self, hidden_layers):
+        self.hidden_layers = hidden_layers
+        self.limits = {}
+
+    def create_state(self, compiled_network, **kwargs):
+        return compiled_network
+
+    def on_batch_begin(self, compiled_network, batch):
+        if batch == 1:
+            for layer in self.hidden_layers:
+                limit = compiled_network.neuron_populations[layer].vars["LambdavLimit"]
+                limit.pull_from_device()
+                self.limits[layer.name] = np.max(limit.values)
+
+
+def lambda_recorders(layers):
+    # Batch 1 runs the backward pass of batch 0, so lane 0 of batch 1
+    # holds lambda_V of the first training example of the epoch.
+    return [VarRecorder(layer, "Lambdav", key=("lambda", layer.name),
+                        example_filter=[BATCH_SIZE]) for layer in layers]
+
+
+def log_lambda_trace(log, epoch, data, limits, layers):
+    for layer in layers:
+        lam = np.abs(data[("lambda", layer.name)][0])  # (timesteps, neurons)
+        spikes = int(np.sum(data[("train", layer.name)][0]))
+        limit = limits[layer.name]
+        clipped = int(np.sum(lam == limit)) if limit > 0 else 0
+        nonzero = lam[lam > 0]
+        log.write(epoch=epoch, layer=layer.name, limit=float(limit), forward_spikes=spikes,
+                  zero_fraction=np.mean(lam == 0),
+                  zero_neurons=np.mean(lam.max(axis=0) == 0),
+                  clipped_jumps=clipped, clipped_per_spike=clipped / max(spikes, 1),
+                  median_nonzero=float(np.median(nonzero)) if nonzero.size else 0.0,
+                  max_abs=float(lam.max()))
 
 
 def spike_recorders(layers, split, num_examples):
@@ -86,6 +142,8 @@ def main():
                         help="Seed for weight initialisation and shuffling (must not be 0)")
     parser.add_argument("--train-all", action="store_true",
                         help="Train on all official training subjects, without validation")
+    parser.add_argument("--lambda-epochs", type=int, nargs="*", default=[],
+                        help="Epochs at which to record lambda_V of one training example")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
     if args.seed == 0:
@@ -128,6 +186,7 @@ def main():
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
+        lambda_epochs=args.lambda_epochs,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer)
@@ -140,7 +199,11 @@ def main():
                                          "val_correct", "val_total", "seconds"])
     spikes_log = CSVLog("spikes.csv", ["epoch", "split", "layer", "mean_per_neuron",
                                        "max_per_neuron", "silent_fraction"])
-    limit_log = CSVLog("adjoint_limits.csv", ["epoch", "layer", "limit"])
+    limit_log = CSVLog("adjoint_limits.csv", ["epoch", "layer", "limit", "zero_fraction"])
+    if args.lambda_epochs:
+        lambda_log = CSVLog("lambda_trace.csv", [
+            "epoch", "layer", "limit", "forward_spikes", "zero_fraction", "zero_neurons",
+            "clipped_jumps", "clipped_per_spike", "median_nonzero", "max_abs"])
     checkpoint = Checkpoint(Numpy("checkpoints"))
 
     with compiled:
@@ -150,6 +213,10 @@ def main():
             callbacks = ["batch_progress_bar", checkpoint,
                          AdjointLimitLog(limit_log, hidden_layers),
                          *spike_recorders(hidden_layers, "train", len(train_x))]
+            trace = epoch in args.lambda_epochs
+            if trace:
+                limit_recorder = BackwardLimitRecorder(hidden_layers)
+                callbacks += [limit_recorder, *lambda_recorders(hidden_layers)]
             if args.train_all:
                 train_metrics, train_data = compiled.train(
                     {input_pop: train_x}, {output_pop: train_y},
@@ -176,6 +243,9 @@ def main():
                               train_loss=train_loss, val_correct=val_correct,
                               val_total=val_total, seconds=round(perf_counter() - start, 1))
             log_spike_counts(spikes_log, epoch, "train", train_data, hidden_layers)
+            if trace:
+                log_lambda_trace(lambda_log, epoch, train_data, limit_recorder.limits,
+                                 hidden_layers)
             if val_data is not None:
                 log_spike_counts(spikes_log, epoch, "validation", val_data, hidden_layers)
             validation = f", validation {val_correct}/{val_total}" if val_total else ""
