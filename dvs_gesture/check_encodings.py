@@ -84,7 +84,7 @@ def numpy_evdownsampling(event_downsample, events, integer_us):
         output = event_downsample(events.copy(), SENSOR, TARGET_SIZE, dt=1,
                                   tau_theta=TAU_THETA_MS, tau_accumulator=TAU_ACCUMULATOR_MS,
                                   beta=BETA)
-    except ValueError as error:
+    except Exception as error:
         print(f"  NumPy event_downsample failed ({'us' if integer_us else 'ms'}): {error}")
         return None
     return to_spikes(output, time_scale)
