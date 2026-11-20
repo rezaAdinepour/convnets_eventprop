@@ -1,6 +1,6 @@
 from ml_genn import InputLayer, Layer, SequentialNetwork
 from ml_genn.compilers import EventPropCompiler, InferenceCompiler
-from ml_genn.connectivity import AvgPoolConv2D, Conv2D, Dense
+from ml_genn.connectivity import AvgPoolConv2D, AvgPoolDense2D, Conv2D, Dense
 from ml_genn.initializers import Normal
 from ml_genn.losses import SparseCategoricalCrossentropy
 from ml_genn.neurons import LeakyIntegrate, LeakyIntegrateFire, SpikeInput
@@ -28,8 +28,12 @@ REG_TARGET = 100.0
 REG_STRENGTH = (1e-10, 1e-10)
 
 
-def build_network(max_input_spikes_per_batch):
-    """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer."""
+def build_network(max_input_spikes_per_batch, dense_hidden=False):
+    """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
+
+    dense_hidden=True uses AvgPoolDense2D for the 256-unit layer, as in the
+    reference model, instead of the equivalent full-field AvgPoolConv2D.
+    """
     def lif():
         return LeakyIntegrateFire(v_thresh=1.0, tau_mem=TAU_MEM_MS)
 
@@ -46,8 +50,11 @@ def build_network(max_input_spikes_per_batch):
               lif(), synapse=synapse(), record_spikes=True, name="conv2")
         Layer(AvgPoolConv2D(spiking_weights, 8, 2, 3, conv_padding="same", sum=True),
               lif(), synapse=synapse(), record_spikes=True, name="conv3")
-        Layer(AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True, flatten=True),
-              lif(), synapse=synapse(), record_spikes=True, name="hidden")
+        if dense_hidden:
+            hidden, shape = AvgPoolDense2D(spiking_weights, 2, sum=True), 256
+        else:
+            hidden, shape = AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True, flatten=True), None
+        Layer(hidden, lif(), shape, synapse=synapse(), record_spikes=True, name="hidden")
         Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD)),
               LeakyIntegrate(tau_mem=TAU_MEM_MS, readout="avg_var_exp_weight"),
               NUM_CLASSES, synapse=synapse(), name="output")
