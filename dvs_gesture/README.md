@@ -39,7 +39,10 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
   `preprocess_tonic_spikes(dt=1, histogram_thresh=1)`.
 * `--encoding evdownsampling`: the authors' real-time GeNN implementation
   (`EventDownsampleGeNN` in `event_downsampling_genn.py`), with the parameters of
-  their `test_script_genn.py` (tau_theta 420 ms, tau_accumulator 16 ms, beta 1.2).
+  their `test_script_genn.py` (tau_theta 420 ms, tau_accumulator 16 ms, beta 1.2, dt 1 ms).
+  The author confirmed by email (20 Nov 2026) that these are the values he used for
+  DVS Gesture, the same as for his outdoor scenes and not tuned for DVS Gesture.
+  (`ncaltech_testing.py` passes tau_theta 16 and tau_accumulator 420 to the NumPy version.)
   It replaces the 4x spatial downsampling. The repository is expected next to this
   one (`Projects/EvDownsampling`); override with `EVDOWNSAMPLING_REPO=...`. Its
   GeNN code is built in `<cache dir>/evdownsampling_genn/`.
