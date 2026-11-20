@@ -155,3 +155,27 @@ EvDownsampling, real time, regulariser 1e-8, grad limit 100, seed 1, 100 epochs:
 
 On whole trials the conv1 limit shrinks by about 80x every 10 epochs; on 2000 ms
 trials all limits stay at 1e-5 to 6e-5.
+
+### lambda_V diagnosis (`--lambda-epochs 0 4 9 19`, 20 epochs, seed 1)
+
+| Run | Trial, grad limit | Validation at epoch 19 | conv1 jumps clipped to +/-limit (epochs 4 / 9 / 19) | conv1 limit at epoch 19 |
+| --- | --- | --- | --- | --- |
+| `dvs_gesture_b32_20261120_164406` | whole, 100 | 59/143 | 99.9% / 99.98% / 100% | 8.2e-13 |
+| `dvs_gesture_b32_20261120_170357` | whole, 1000 | 55/143 | 0.02% / 0.02% / 0.03% | 2.4e-5 |
+| `dvs_gesture_b32_20261120_172859` | first 2000 ms, 100 | 89/143 | 0.15% / 0.09% / 0.03% | 1.8e-5 |
+
+* With grad limit 100 on whole trials almost every conv1 jump (and, at epoch 4, every
+  conv2 jump) is clipped, so lambda_V there is set by the clamp and the clamp
+  shrinks each batch. With grad limit 1000, or 2000 ms trials, the clamp almost never binds.
+* Many lambda_V values are exactly zero in all runs, also at epoch 0 when the limit is
+  still 1.0 (no clipping): 84% of conv1 neurons have lambda_V = 0 throughout the first
+  example, and over all batches 64-73% of conv1 and 18-34% of `hidden`
+  (neuron, example) pairs. A hidden neuron's lambda_V only jumps at its own spikes,
+  so a neuron that does not fire in an example gets no gradient from it; after a
+  spike lambda_V decays with tau_mem and reaches float32 zero after long silences.
+* A grad limit of 1000 removes the clipping but does not make whole trials learn as
+  fast as 2000 ms trials. In mlGeNN the output drive of `avg_var_exp_weight` is divided
+  by the trial length, while the `SpikeCount` drive added at each spike is not, so the
+  same regulariser strength is about 9x stronger relative to the loss on whole trials.
+* Re-running the same seed is not bit-identical on the GPU: validation differed by up
+  to 4/143 per epoch from the Stage 1 runs (`144157`, `131943`) over the first 20 epochs.
