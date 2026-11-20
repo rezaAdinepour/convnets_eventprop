@@ -62,7 +62,8 @@ def build_network(max_input_spikes_per_batch, dense_hidden=False):
 
 
 def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
-                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED):
+                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED,
+                         name="dvs_gesture_train"):
 
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
@@ -72,13 +73,13 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
         dt=BIN_MS, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)
     adam = Adam(alpha=LEARNING_RATE)
-    return compiler.compile(network, name="dvs_gesture_train",
+    return compiler.compile(network, name=name,
                             optimisers={"all_connections": {"weight": adam}},
                             regularisers={"all_hidden_populations": regulariser})
 
 
-def compile_for_inference(network, example_timesteps, seed=SEED):
+def compile_for_inference(network, example_timesteps, seed=SEED, name="dvs_gesture_inference"):
     compiler = InferenceCompiler(evaluate_timesteps=example_timesteps,
                                  dt=BIN_MS, batch_size=BATCH_SIZE,
                                  reset_in_syn_between_batches=True, rng_seed=seed)
-    return compiler.compile(network, name="dvs_gesture_inference")
+    return compiler.compile(network, name=name)
