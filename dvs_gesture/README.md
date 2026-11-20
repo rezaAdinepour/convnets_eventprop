@@ -169,7 +169,7 @@ trials all limits stay at 1e-5 to 6e-5.
   shrinks each batch. With grad limit 1000, or 2000 ms trials, the clamp almost never binds.
 * Many lambda_V values are exactly zero in all runs, also at epoch 0 when the limit is
   still 1.0 (no clipping): 84% of conv1 neurons have lambda_V = 0 throughout the first
-  example, and over all batches 64-73% of conv1 and 18-34% of `hidden`
+  example, and over all batches 64-77% of conv1 and 18-34% of `hidden`
   (neuron, example) pairs. A hidden neuron's lambda_V only jumps at its own spikes,
   so a neuron that does not fire in an example gets no gradient from it; after a
   spike lambda_V decays with tau_mem and reaches float32 zero after long silences.
