@@ -8,9 +8,10 @@ from time import perf_counter
 import numpy as np
 from ml_genn.callbacks import Callback, Checkpoint, SpikeRecorder
 from ml_genn.serialisers import Numpy
+from ml_genn.utils.data import calc_max_spikes
 
-from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_batch,
-                  max_spikes_per_neuron, split_train_validation)
+from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_neuron,
+                  split_train_validation)
 from model import (BATCH_SIZE, GRAD_LIMIT, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED,
                    build_network, compile_for_training)
 
@@ -107,8 +108,7 @@ def main():
         train_x = train_x + val_x
         train_y = np.concatenate((train_y, val_y))
         val_x, val_y = [], val_y[:0]
-    input_buffer = max(max_spikes_per_batch(train_x, BATCH_SIZE),
-                       max_spikes_per_batch(val_x, BATCH_SIZE))
+    input_buffer = BATCH_SIZE * calc_max_spikes(train_x + val_x)
     peak_input = max_spikes_per_neuron(train_x + val_x)
     print(f"Train: {len(train_x)}, validation: {len(val_x)}, encoding: {args.encoding}")
     print(f"Trial: {example_timesteps} ms, input buffer: {input_buffer} spikes, "

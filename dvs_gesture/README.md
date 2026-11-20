@@ -6,14 +6,14 @@ A small convolutional spiking network trained on DVS Gesture with mlGeNN's
 the training here is EventProp, not surrogate gradients.
 
 Tested against mlGeNN `ml_genn_3` at `a00d91bf18450716d099e4d1caf400c0aaf40b2a`,
-PyGeNN 5.5.0 and Tonic 1.5.0.
+PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
+`1971fb35f37bff4aa6e1d3b3d749e7d3c560fd1a`.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `data.py` | Load DVS Gesture with Tonic, split by subject, encode each recording as input spikes |
-| `evdownsampling.py` | EvDownsampling encoder (Ghosh, Nowotny and Knight, Eq. 1) |
 | `model.py` | Network definition and the training / inference compilers |
 | `train.py` | Training loop with per-epoch CSV logs and checkpoints |
 | `evaluate.py` | Reload the best epoch and evaluate validation (or, once, the test set) |
@@ -35,7 +35,46 @@ PyGeNN 5.5.0 and Tonic 1.5.0.
   (from its first event, before denoising); recordings shorter than T are followed
   by silence. `--trial-ms` and `--crop-ms` cannot be combined.
 * `--encoding occupancy` (default): one spike per pixel, polarity and 1 ms bin that
-  contains at least one event. `--encoding evdownsampling`: adaptive-threshold encoder.
+  contains at least one event, using mlGeNN's
+  `preprocess_tonic_spikes(dt=1, histogram_thresh=1)`.
+* `--encoding evdownsampling`: the authors' real-time GeNN implementation
+  (`EventDownsampleGeNN` in `event_downsampling_genn.py`), with the parameters of
+  their `test_script_genn.py` (tau_theta 420 ms, tau_accumulator 16 ms, beta 1.2).
+  It replaces the 4x spatial downsampling. The repository is expected next to this
+  one (`Projects/EvDownsampling`); override with `EVDOWNSAMPLING_REPO=...`. Its
+  GeNN code is built in `<cache dir>/evdownsampling_genn/`.
+* The SpikeInput buffer is `BATCH_SIZE * calc_max_spikes(...)`, as in the mlGeNN examples.
+
+### Checks against the library and the authors' code (commit `74c640c`)
+
+`check_encodings.py` (removed afterwards) compared the first training recording of
+each class (11 recordings):
+
+* the previous hand-written occupancy encoder and `preprocess_tonic_spikes` gave
+  identical spikes for all 11;
+* the previous hand-written EvDownsampling (from Eq. 1 of the paper) and
+  `EventDownsampleGeNN` gave 1,807,106 vs 1,807,110 spikes, identical in 10
+  recordings and 4 spikes apart in one;
+* the authors' NumPy version (`event_based_downsampling.py`) failed on all 22 calls:
+  `setting an array element with a sequence` when exactly one pixel of a polarity
+  fires in a step, and an int32 casting error with float ms times. With integer us
+  times it also multiplies beta by 1000.
+
+## Architecture
+
+Same layer sizes as the reference model (`ml_genn` branch `sirine_dvs_gesture`,
+`examples/dvs_gesture.py`), with two library-level substitutions:
+
+* The reference's `Conv2D(..., conv_padding=1)` needs integer padding, which only
+  exists on `sirine_dvs_gesture`; `ml_genn_3` accepts only `"valid"`/`"same"`.
+  A one-pixel silent input border gives the same result.
+* The reference's `AvgPoolDense2D` (3x3x8 pooled -> 256) is replaced by
+  `AvgPoolConv2D` with a full-field 3x3 valid convolution, i.e. the same 72x256
+  dense weights. A trainable `AvgPoolDense2D` uses a rank-2 Toeplitz kernel, and
+  GeNN 5.5.0 fails in `_create_backend` with
+  `vector::_M_range_check: __n (which is 2) >= this->size() (which is 2)` when it
+  is combined with a rank-4 Toeplitz `AvgPoolConv2D` in one training model; alone
+  it builds (`check_build.py`, commit `c277896`).
 
 ## Training setup
 

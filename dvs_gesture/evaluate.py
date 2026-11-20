@@ -6,10 +6,10 @@ from pathlib import Path
 
 import numpy as np
 from ml_genn.serialisers import Numpy
+from ml_genn.utils.data import calc_max_spikes
 from tonic.datasets import DVSGesture
 
-from data import (NUM_CLASSES, encode_recordings, load_dataset, max_spikes_per_batch,
-                  split_train_validation)
+from data import NUM_CLASSES, encode_recordings, load_dataset, split_train_validation
 from model import BATCH_SIZE, build_network, compile_for_inference
 
 
@@ -53,7 +53,7 @@ def main():
         print(f"Warning: {(lengths > timesteps).sum()} recordings are longer than the "
               f"{timesteps} ms training trial and will be truncated")
 
-    network = build_network(max_spikes_per_batch(x, BATCH_SIZE))
+    network = build_network(BATCH_SIZE * calc_max_spikes(x))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     os.chdir(run_dir)
     compiled = compile_for_inference(network, timesteps)
