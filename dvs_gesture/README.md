@@ -179,3 +179,20 @@ trials all limits stay at 1e-5 to 6e-5.
   same regulariser strength is about 9x stronger relative to the loss on whole trials.
 * Re-running the same seed is not bit-identical on the GPU: validation differed by up
   to 4/143 per epoch from the Stage 1 runs (`144157`, `131943`) over the first 20 epochs.
+
+### Regulariser strength on whole real-time trials (grad limit 1000, seed 1, 20 epochs)
+
+| Run | `--reg-strength` | Validation / train at epoch 19 | conv1 `LambdavLimit` at epoch 19 | Train spikes per neuron (conv1 / conv2 / hidden) |
+| --- | --- | --- | --- | --- |
+| `dvs_gesture_b32_20261120_170357` | 1e-8 1e-8 | 55/143, 408/934 | 2.4e-5 | 45 / 50 / 95 |
+| `dvs_gesture_b32_20261120_174642` | 1e-9 1e-9 | 76/143, 525/934 | 2.4e-6 | 45 / 50 / 96 |
+| `dvs_gesture_b32_20261120_181129` | 0 1e-10 | 81/143, 617/934 | 2.4e-8 | 14 / 10 / 72 |
+| `dvs_gesture_b32_20261118_133711` (seed 0, earlier EvDownsampling code) | 0 1e-10 | 83/143, 622/934 | 3.1e-8 | 15 / 12 / 75 |
+
+* The limit (proportional to the mean |lambda_V|) scales with the regulariser
+  strength, so with 1e-8 or 1e-9 the hidden-layer adjoints on whole trials are
+  almost entirely `SpikeCount` drive; without it they are about 1000x smaller.
+* With almost no regulariser the run reproduces `133711`, so its better accuracy came
+  from the regulariser setting, not from its seed or the earlier EvDownsampling code.
+* The same setting over 200 epochs (`dvs_gesture_b32_20261118_154008`) peaked at
+  108/143 (epoch 63) while the conv1 limit fell from ~2e-8 (epoch 49) to 9e-12 (epoch 199).
