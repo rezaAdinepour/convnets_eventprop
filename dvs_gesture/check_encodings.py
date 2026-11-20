@@ -80,9 +80,20 @@ def numpy_evdownsampling(event_downsample, events, integer_us):
         events = events.astype(dtype)
         events["t"] /= 1000.0
         time_scale = 1.0
-    output = event_downsample(events.copy(), SENSOR, TARGET_SIZE, dt=1, tau_theta=TAU_THETA_MS,
-                              tau_accumulator=TAU_ACCUMULATOR_MS, beta=BETA)
+    try:
+        output = event_downsample(events.copy(), SENSOR, TARGET_SIZE, dt=1,
+                                  tau_theta=TAU_THETA_MS, tau_accumulator=TAU_ACCUMULATOR_MS,
+                                  beta=BETA)
+    except ValueError as error:
+        print(f"  NumPy event_downsample failed ({'us' if integer_us else 'ms'}): {error}")
+        return None
     return to_spikes(output, time_scale)
+
+
+def describe(reference, spikes):
+    if spikes is None:
+        return f"{'fail':>6} {'-':>5}"
+    return f"{len(spikes.spike_times):6d} {overlap(reference, spikes):5.3f}"
 
 
 def spike_pairs(spikes):
@@ -130,8 +141,9 @@ def main():
     print(f"{'idx':>5} {'class':>5} {'ms':>6} | {'occ':>7} {'same':>5} | {'ours':>6} "
           f"{'genn':>6} {'ovl':>5} {'np_ms':>6} {'ovl':>5} {'np_us':>6} {'ovl':>5} | "
           f"{'s_ours':>6} {'s_genn':>6} {'s_np':>6}")
-    totals = np.zeros(4)
-    seconds = np.zeros(3)
+    totals = np.zeros(2)
+    seconds = np.zeros(2)
+    numpy_failures = 0
     all_same = True
     for i in indices:
         raw, label = dataset[i]
@@ -151,19 +163,19 @@ def main():
         np_ms = numpy_evdownsampling(event_downsample, events, integer_us=False)
         t_np = perf_counter() - start
         np_us = numpy_evdownsampling(event_downsample, events, integer_us=True)
+        numpy_failures += (np_ms is None) + (np_us is None)
 
-        counts = [len(s.spike_times) for s in (ours, genn, np_ms, np_us)]
-        totals += counts
-        seconds += (t_ours, t_genn, t_np)
+        totals += (len(ours.spike_times), len(genn.spike_times))
+        seconds += (t_ours, t_genn)
         print(f"{i:5d} {label:5d} {num_bins:6d} | {len(occupancy.spike_times):7d} {str(same):>5} | "
-              f"{counts[0]:6d} {counts[1]:6d} {overlap(ours, genn):5.3f} "
-              f"{counts[2]:6d} {overlap(ours, np_ms):5.3f} {counts[3]:6d} {overlap(ours, np_us):5.3f} | "
+              f"{len(ours.spike_times):6d} {describe(ours, genn)} "
+              f"{describe(ours, np_ms)} {describe(ours, np_us)} | "
               f"{t_ours:6.1f} {t_genn:6.1f} {t_np:6.1f}")
 
     print(f"\nOccupancy identical for all recordings: {all_same}")
-    print("Total EvDownsampling spikes (ours, genn, numpy ms, numpy us): "
-          + ", ".join(str(int(n)) for n in totals))
-    print("Total seconds (ours, genn, numpy ms): " + ", ".join(f"{s:.1f}" for s in seconds))
+    print(f"Total EvDownsampling spikes (ours, genn): {int(totals[0])}, {int(totals[1])}")
+    print(f"Total seconds (ours, genn): {seconds[0]:.1f}, {seconds[1]:.1f}")
+    print(f"NumPy event_downsample failures: {numpy_failures} of {2 * len(indices)} calls")
 
 
 if __name__ == "__main__":
