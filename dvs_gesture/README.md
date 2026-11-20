@@ -200,3 +200,17 @@ trials all limits stay at 1e-5 to 6e-5.
   from the regulariser setting, not from its seed or the earlier EvDownsampling code.
 * The same setting over 200 epochs (`dvs_gesture_b32_20261118_154008`) peaked at
   108/143 (epoch 63) while the conv1 limit fell from ~2e-8 (epoch 49) to 9e-12 (epoch 199).
+
+### Activity profile of the recordings (`activity_profile.py`)
+
+`Experiments/dvs_gesture_activity_20261120_191055` (training and validation subjects,
+500 ms bins, after denoising):
+
+* There are no silent stretches inside the recordings: with a threshold of 10% of the
+  busiest bin, the median leading and trailing silence is 0 ms (95th percentile 0 and
+  500 ms) and trimming would keep >= 99.2% of the events in 95% of recordings.
+* Recording length: median 6.4 s, 95th percentile 9.4 s; 13% are longer than 8 s and
+  3.3% longer than 10 s. The longest training recording is 12.8 s; the 18,454 ms trial
+  length comes from one validation recording (subject 21, whose recordings average 9.5 s).
+* So on whole-recording trials the silence is the padding after each gesture: a median
+  recording is followed by about 12 s of silence, and the loss drive is averaged over it.
