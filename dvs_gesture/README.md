@@ -117,12 +117,18 @@ Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 | `delays.csv` | Only with `--delay-layers`: per epoch and delay connection, mean, sd, median and 95th percentile of the delays (timesteps = ms) and the fractions at 0 and at the maximum |
 | `checkpoints/` | Weights (`<epoch>-<layer>-weight.npy`) and, with `--delay-layers`, delays (`<epoch>-<layer>-delay.npy`) after every epoch and before training (`initial-...`) |
 
-`--delay-layers hidden output` learns synaptic delays on the connections into those
-layers (mlGeNN EventProp delay learning, Adam on the delays). Delays start from
+`--delay-layers output` learns synaptic delays on the hidden -> output Dense
+connection (mlGeNN EventProp delay learning, Adam on the delays). Delays start from
 U(0, `--init-delay-ms`) (default 50; a constant start would make mlGeNN skip the
 delayed adjoint lookup), are clipped to [0, `--max-delay-ms`] (default 150) and use
-`--delay-lr` (default 0.1, in timesteps). Delays on convolutions are shared by every
-position of a kernel weight. These defaults are untuned starting points.
+`--delay-lr` (default 0.1, in timesteps). These defaults are untuned starting points.
+
+Only the output connection is allowed: with delay learning on any kernel connection
+GeNN 5.5.0 fails in `_create_backend` with
+`vector::_M_range_check: __n (which is 0) >= this->size() (which is 0)`, both for
+Toeplitz (`hidden`, run `20261121_020024`) and procedural-kernel connectivity
+(`conv1`, run `20261121_020425`). The Dense output connection builds and its delays
+change during training (run `20261121_015858`, 2 epochs).
 
 `--train-all` trains on all 23 training subjects (1077 recordings) without
 validation; choose `--epochs` beforehand from validation runs. `evaluate.py`

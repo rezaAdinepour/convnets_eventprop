@@ -26,8 +26,11 @@ GRAD_LIMIT = 100.0
 REG_TARGET = 100.0
 REG_STRENGTH = (1e-10, 1e-10)
 
-# Learnable delays (layer names whose incoming connection learns them)
-LAYER_NAMES = ("conv1", "conv2", "conv3", "hidden", "output")
+# Learnable delays (layer names whose incoming connection learns them).
+# With kernel connectivity (Toeplitz or procedural, i.e. every layer but the
+# Dense output) GeNN 5.5.0 fails in _create_backend with
+# "vector::_M_range_check: __n (which is 0) >= this->size() (which is 0)".
+LAYER_NAMES = ("output",)
 MAX_DELAY_MS = 150.0
 INIT_DELAY_MS = 50.0
 DELAY_LEARNING_RATE = 0.1
