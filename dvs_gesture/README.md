@@ -130,6 +130,23 @@ Toeplitz (`hidden`, run `20261121_020024`) and procedural-kernel connectivity
 (`conv1`, run `20261121_020425`). The Dense output connection builds and its delays
 change during training (run `20261121_015858`, 2 epochs).
 
+Output delays did not help (4 s EvDownsampling, grad limit 200, regulariser 5e-9,
+seed 1, 100 epochs):
+
+| Run | Delays | Best (epoch) | Last 20 | Train last 20 | s/epoch |
+|---|---|---|---|---|---|
+| `20261120_203626` | none | 118 (93) | 115.0 | 86.6% | 47.8 |
+| `20261121_020639` | output, defaults | 113 (72) | 111.2 | 85.9% | 49.8 |
+
+- The gap (3.9 on the last-20 mean) is about the seed noise (about 4/143), so this
+  shows no benefit rather than harm.
+- Spike counts and adjoint limits of every hidden layer match the baseline to within 1%.
+- Delays (ms): mean 25.4 -> 23.7, sd 14.5 -> 24.4, 95th percentile 47.7 -> 69.9, at 0
+  1.8% -> 28%, none at 150. The sd was still growing at epoch 99.
+- Delays are therefore off by default. Delays inside the network (where they could
+  combine features over time) need kernel connectivity and are blocked by the GeNN
+  error above.
+
 `--train-all` trains on all 23 training subjects (1077 recordings) without
 validation; choose `--epochs` beforehand from validation runs. `evaluate.py`
 then uses the last epoch and only accepts `--test`.
