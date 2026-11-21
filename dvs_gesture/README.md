@@ -214,3 +214,32 @@ trials all limits stay at 1e-5 to 6e-5.
   length comes from one validation recording (subject 21, whose recordings average 9.5 s).
 * So on whole-recording trials the silence is the padding after each gesture: a median
   recording is followed by about 12 s of silence, and the loss drive is averaged over it.
+
+### Real-time window (EvDownsampling, seed 1, 100 epochs)
+
+Grad limit and regulariser strength are scaled with the window length from the 2 s run
+(grad limit 100, strength 1e-8), so the regulariser keeps the same weight against the
+1/T loss drive. Validation is out of 143; "last 20" is the mean of epochs 80-99.
+
+| Run | Trial | Grad limit | Regulariser | Best (epoch) | Last 20 | Train, last 20 | s/epoch |
+|---|---|---|---|---|---|---|---|
+| `20261120_131943` | first 2 s | 100 | 1e-8 | 113 (83) | 107.4 | 88.8% | |
+| `20261120_203626` | first 4 s | 200 | 5e-9 | 118 (93) | 115.0 | 86.6% | 52 |
+| `20261120_220835` | first 6 s | 300 | 3e-9 | 118 (97) | 114.5 | 82.0% | 56 |
+| `20261120_235241` | first 8 s | 400 | 2.5e-9 | 117 (97) | 113.5 | 79.0% | 60 |
+| `20261120_185021` | whole (18.5 s) | 1000 | 0 / 1e-10 | 109 (92) | 106.0 | 81.3% | 35 |
+
+* 4, 6 and 8 s are equal within the seed-to-seed spread (about 4/143) and all beat 2 s
+  and the whole recording by about 7-9 examples. 4 s is kept: shortest latency and
+  cheapest of the three.
+* None of the windowed runs has converged: validation still rises in epochs 90-99 and
+  training accuracy is only 79-87%, with a train-validation gap of -0.4 to 6 points.
+  The model underfits; it does not overfit.
+* With the scaled regulariser the hidden layer sits at its target (95-100 spikes per
+  gesture) and the conv layers at 45-62; adjoint limits stay at 4e-6 to 1e-5 throughout.
+* Whole recording: the conv1 limit stays at 1e-8 to 3e-8 up to epoch 99 (no collapse
+  as in the 200-epoch run). In the epoch-99 trace, 9.9% of conv2's backward jumps hit the
+  limit (0.1% at epoch 49), and the median non-zero |lambda_V| is 1e-19 to 1e-14.
+  Most of the adjoint has decayed to almost nothing over the 12 s of padding.
+* s/epoch follows spike counts, not trial length: the sparse whole-recording run is the
+  fastest.
