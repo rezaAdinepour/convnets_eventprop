@@ -304,3 +304,23 @@ Grad limit and regulariser strength are scaled with the window length from the 2
 * Spike counts and adjoint limits at epoch 99 are within 10% of the baseline in all runs.
 * Default stays constant 1e-3. 3e-3 with warm-up and cosine converges within 100 epochs,
   so it suits comparisons of model variants whose convergence speed differs.
+
+### Stride vs pool and dense-layer ablation (4 s EvDownsampling, grad limit 200, regulariser 5e-9, seed 1, 100 epochs, 5-epoch warm-up to lr 3e-3 then cosine)
+
+| Run | Variant | Weights | Best (epoch) | Last 20 | Train, last 20 | Train loss, epoch 99 | s/epoch |
+|---|---|---|---|---|---|---|---|
+| `20261121_121123` | `pool` | 25,504 | 117 (48) | 113.2 | 88.6% | 0.448 | 52.3 |
+| `20261121_141930` | `--downsample stride` | 107,424 | 105 (48) | 102.5 | 94.1% | 0.314 | 44.3 |
+| `20261121_153308` | `--no-hidden` | 8,568 | 99 (46) | 94.2 | 86.5% | 0.524 | 47.3 |
+
+* Both changes lose far more than the seed spread (about 4/143): stride by 10.7 and
+  no hidden layer by 19.1 on the last-20 mean.
+* Stride fits the training set better (94% train, past the pool model's 88% ceiling)
+  but generalises worse: the train-validation gap grows from 9 to 22 points. It changes
+  two things at once, the strided conv3 and the 4x larger Dense hidden layer. The extra
+  weights are the likelier cause of the overfitting, but this run cannot separate them.
+* Without the hidden layer, training accuracy is only 2 points lower but validation
+  drops by 13 points. The dense mixing layer matters mainly for generalisation.
+* In all three, every layer reaches the same activity by epoch 50 (conv1 46, conv2 60-62,
+  conv3 76-87, hidden 98 spikes per neuron per gesture), and the adjoint limits stay at 5e-6 to 1e-5.
+* `pool` stays the default.
