@@ -275,3 +275,21 @@ Grad limit and regulariser strength are scaled with the window length from the 2
   Most of the adjoint has decayed to almost nothing over the 12 s of padding.
 * s/epoch follows spike counts, not trial length: the sparse whole-recording run is the
   fastest.
+
+### Learning-rate schedule (4 s EvDownsampling, grad limit 200, regulariser 5e-9, seed 1, 100 epochs)
+
+| Run | Weight lr | Best (epoch) | Val, epochs 40-59 | Last 20 | Train, last 20 | Train loss, epoch 99 |
+|---|---|---|---|---|---|---|
+| `20261120_203626` | constant 1e-3 | 118 (93) | 102.8 | 115.0 | 86.6% | 0.529 |
+| `20261121_105040` | cosine from 1e-3 | 104 (78) | 101.0 | 103.5 | 81.1% | 0.709 |
+| `20261121_121123` | 5-epoch warm-up to 3e-3, then cosine | 117 (48) | 113.7 | 113.2 | 88.6% | 0.448 |
+
+* Cosine from 1e-3 halves the total step size and underfits further (train 81%).
+* At 3e-3 the model reaches the constant-1e-3 final level (113-115) by epoch 40, about
+  twice as fast, then stays flat: train accuracy stops at about 88% from epoch 50 while
+  the lr is still above 1e-3. Its last 20 equals the baseline within the seed spread.
+* So once training has converged, the ceiling is about 88% train / 79% validation.
+  More or longer optimisation does not move it; this points at the model and input (stage 5).
+* Spike counts and adjoint limits at epoch 99 are within 10% of the baseline in all runs.
+* Default stays constant 1e-3. 3e-3 with warm-up and cosine converges within 100 epochs,
+  so it suits comparisons of model variants whose convergence speed differs.
