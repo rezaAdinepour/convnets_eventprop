@@ -313,15 +313,21 @@ Grad limit and regulariser strength are scaled with the window length from the 2
 | `20261121_121123` | `pool` | 25,504 | 117 (48) | 113.2 | 88.6% | 0.448 | 52.3 |
 | `20261121_141930` | `--downsample stride` | 107,424 | 105 (48) | 102.5 | 94.1% | 0.314 | 44.3 |
 | `20261121_153308` | `--no-hidden` | 8,568 | 99 (46) | 94.2 | 86.5% | 0.524 | 47.3 |
+| `20261121_172832` | `--downsample conv3-stride` | 25,504 | 108 (58) | 105.2 | 84.2% | 0.626 | 44.0 |
 
-* Both changes lose far more than the seed spread (about 4/143): stride by 10.7 and
-  no hidden layer by 19.1 on the last-20 mean.
+* All three changes lose far more than the seed spread (about 4/143) on the last-20 mean:
+  stride by 10.7, conv3-stride by 8.0 and no hidden layer by 19.1.
 * Stride fits the training set better (94% train, past the pool model's 88% ceiling)
-  but generalises worse: the train-validation gap grows from 9 to 22 points. It changes
-  two things at once, the strided conv3 and the 4x larger Dense hidden layer. The extra
-  weights are the likelier cause of the overfitting, but this run cannot separate them.
+  but generalises worse: the train-validation gap grows from 9 to 22 points.
+* The conv3-stride control separates the two changes in `stride`. With the pooled hidden
+  layer and the same weight count as `pool`, striding conv3 lowers both training (84%)
+  and validation accuracy, so striding itself costs about 8 points. The 4x larger Dense
+  hidden layer of `stride` recovers training accuracy but not validation accuracy, so it
+  causes the overfitting. At epoch 0 strided conv3 fires 5 spikes per neuron per gesture
+  against 42 with the sum-pool, and validation lags early (72 vs 84 at epoch 9), but the
+  activity matches by epoch 50.
 * Without the hidden layer, training accuracy is only 2 points lower but validation
   drops by 13 points. The dense mixing layer matters mainly for generalisation.
-* In all three, every layer reaches the same activity by epoch 50 (conv1 46, conv2 60-62,
+* In all four, every layer reaches the same activity by epoch 50 (conv1 46, conv2 60-62,
   conv3 76-87, hidden 98 spikes per neuron per gesture), and the adjoint limits stay at 5e-6 to 1e-5.
 * `pool` stays the default.
