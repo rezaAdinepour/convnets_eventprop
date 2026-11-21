@@ -114,7 +114,15 @@ Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 | `spikes.csv` | Per epoch, split and hidden layer: mean and max spikes per neuron per gesture, fraction of silent neurons |
 | `adjoint_limits.csv` | Per epoch and hidden layer: EventProp's adaptive adjoint clamp `LambdavLimit`, and the fraction of (neuron, example) pairs whose lambda_V was zero for the whole backward pass (from `LambdavAbsSum`, averaged over batches) |
 | `lambda_trace.csv` | Only with `--lambda-epochs`: for the first training example of those epochs, per hidden layer, the clamp used, its forward spikes, the fraction of (timestep, neuron) entries with lambda_V = 0, neurons with lambda_V = 0 throughout, jumps clipped to exactly +/-`LambdavLimit` (total and per forward spike), and median / max abs lambda_V |
-| `checkpoints/` | Weights after every epoch (`<epoch>-<layer>-weight.npy`) and before training (`initial-...`) |
+| `delays.csv` | Only with `--delay-layers`: per epoch and delay connection, mean, sd, median and 95th percentile of the delays (timesteps = ms) and the fractions at 0 and at the maximum |
+| `checkpoints/` | Weights (`<epoch>-<layer>-weight.npy`) and, with `--delay-layers`, delays (`<epoch>-<layer>-delay.npy`) after every epoch and before training (`initial-...`) |
+
+`--delay-layers hidden output` learns synaptic delays on the connections into those
+layers (mlGeNN EventProp delay learning, Adam on the delays). Delays start from
+U(0, `--init-delay-ms`) (default 50; a constant start would make mlGeNN skip the
+delayed adjoint lookup), are clipped to [0, `--max-delay-ms`] (default 150) and use
+`--delay-lr` (default 0.1, in timesteps). Delays on convolutions are shared by every
+position of a kernel weight. These defaults are untuned starting points.
 
 `--train-all` trains on all 23 training subjects (1077 recordings) without
 validation; choose `--epochs` beforehand from validation runs. `evaluate.py`

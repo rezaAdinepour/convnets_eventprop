@@ -12,8 +12,9 @@ from ml_genn.utils.data import calc_max_spikes
 
 from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_neuron,
                   split_train_validation)
-from model import (BATCH_SIZE, GRAD_LIMIT, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED,
-                   build_network, compile_for_training)
+from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
+                   MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED, build_network,
+                   compile_for_training, delay_connections)
 
 
 class CSVLog:
@@ -80,6 +81,28 @@ class BackwardLimitRecorder(Callback):
                 self.limits[layer.name] = np.max(limit.values)
 
 
+class DelayLog(Callback):
+    """Log the distribution of each learnable-delay connection's delays (timesteps)."""
+
+    def __init__(self, log, connections):
+        self.log = log
+        self.connections = connections
+
+    def create_state(self, compiled_network, **kwargs):
+        self.pops = [compiled_network.connection_populations[c] for c in self.connections]
+        return compiled_network
+
+    def on_epoch_end(self, compiled_network, epoch, metrics):
+        for connection, pop in zip(self.connections, self.pops):
+            delay = pop.vars["delay"]
+            delay.pull_from_device()
+            d = np.asarray(delay.values, dtype=float).ravel()
+            self.log.write(epoch=epoch, layer=connection.target().name, count=d.size,
+                           mean=d.mean(), sd=d.std(), p50=np.median(d), p95=np.percentile(d, 95),
+                           at_zero=np.mean(d <= 0.5),
+                           at_max=np.mean(d >= connection.max_delay_steps - 0.5))
+
+
 def lambda_recorders(layers):
     # Batch 1 runs the backward pass of batch 0, so lane 0 of batch 1
     # holds lambda_V of the first training example of the epoch.
@@ -144,10 +167,19 @@ def main():
                         help="Train on all official training subjects, without validation")
     parser.add_argument("--lambda-epochs", type=int, nargs="*", default=[],
                         help="Epochs at which to record lambda_V of one training example")
+    parser.add_argument("--delay-layers", nargs="*", choices=LAYER_NAMES, default=[],
+                        help="Layers whose incoming connection learns delays")
+    parser.add_argument("--max-delay-ms", type=float, default=MAX_DELAY_MS)
+    parser.add_argument("--init-delay-ms", type=float, default=INIT_DELAY_MS,
+                        help="Initial delays are drawn from U(0, this)")
+    parser.add_argument("--delay-lr", type=float, default=DELAY_LEARNING_RATE,
+                        help="Adam learning rate for delays (in timesteps)")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
     if args.seed == 0:
         parser.error("--seed 0 makes GeNN pick a random seed")
+    if args.delay_layers and not 0 < args.init_delay_ms <= args.max_delay_ms:
+        parser.error("--init-delay-ms must be in (0, --max-delay-ms]")
 
     np.random.seed(args.seed)
 
@@ -186,14 +218,18 @@ def main():
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
-        lambda_epochs=args.lambda_epochs,
+        lambda_epochs=args.lambda_epochs, delay_layers=args.delay_layers,
+        max_delay_ms=args.max_delay_ms, init_delay_ms=args.init_delay_ms,
+        delay_lr=args.delay_lr,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
-    network = build_network(input_buffer)
+    network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
+                            args.init_delay_ms)
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,
-                                    args.reg_strength, args.reg_target, args.seed)
+                                    args.reg_strength, args.reg_target, args.seed,
+                                    args.delay_lr)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds"])
@@ -204,6 +240,10 @@ def main():
         lambda_log = CSVLog("lambda_trace.csv", [
             "epoch", "layer", "limit", "forward_spikes", "zero_fraction", "zero_neurons",
             "clipped_jumps", "clipped_per_spike", "median_nonzero", "max_abs"])
+    delay_log = None
+    if args.delay_layers:
+        delay_log = CSVLog("delays.csv", ["epoch", "layer", "count", "mean", "sd", "p50",
+                                          "p95", "at_zero", "at_max"])
     checkpoint = Checkpoint(Numpy("checkpoints"))
 
     with compiled:
@@ -213,6 +253,8 @@ def main():
             callbacks = ["batch_progress_bar", checkpoint,
                          AdjointLimitLog(limit_log, hidden_layers),
                          *spike_recorders(hidden_layers, "train", len(train_x))]
+            if delay_log is not None:
+                callbacks.append(DelayLog(delay_log, delay_connections(network)))
             trace = epoch in args.lambda_epochs
             if trace:
                 limit_recorder = BackwardLimitRecorder(hidden_layers)

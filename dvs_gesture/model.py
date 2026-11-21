@@ -1,7 +1,7 @@
 from ml_genn import InputLayer, Layer, SequentialNetwork
 from ml_genn.compilers import EventPropCompiler, InferenceCompiler
 from ml_genn.connectivity import AvgPoolConv2D, Conv2D, Dense
-from ml_genn.initializers import Normal
+from ml_genn.initializers import Normal, Uniform
 from ml_genn.losses import SparseCategoricalCrossentropy
 from ml_genn.neurons import LeakyIntegrate, LeakyIntegrateFire, SpikeInput
 from ml_genn.optimisers import Adam
@@ -26,35 +26,70 @@ GRAD_LIMIT = 100.0
 REG_TARGET = 100.0
 REG_STRENGTH = (1e-10, 1e-10)
 
+# Learnable delays (layer names whose incoming connection learns them)
+LAYER_NAMES = ("conv1", "conv2", "conv3", "hidden", "output")
+MAX_DELAY_MS = 150.0
+INIT_DELAY_MS = 50.0
+DELAY_LEARNING_RATE = 0.1
 
-def build_network(max_input_spikes_per_batch):
-    """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer."""
+
+def build_network(max_input_spikes_per_batch, delay_layers=(),
+                  max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS):
+    """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
+
+    Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
+    and a delay buffer of ``max_delay_ms``.
+    """
     def lif():
         return LeakyIntegrateFire(v_thresh=1.0, tau_mem=TAU_MEM_MS)
 
     def synapse():
         return Exponential(TAU_SYN_MS)
 
+    def delay(name):
+        # A constant delay would make mlGeNN skip the delayed adjoint lookup,
+        # so the initial delays must be random (init_delay_ms > 0).
+        if name not in delay_layers:
+            return {}
+        return dict(delay=Uniform(0.0, init_delay_ms / BIN_MS))
+
+    def layer_delay(name):
+        if name not in delay_layers:
+            return {}
+        return dict(max_delay_steps=round(max_delay_ms / BIN_MS))
+
     spiking_weights = Normal(mean=0.0, sd=SPIKING_WEIGHT_SD)
     network = SequentialNetwork()
     with network:
         InputLayer(SpikeInput(max_spikes=max_input_spikes_per_batch), INPUT_SHAPE, name="input")
-        Layer(Conv2D(spiking_weights, 16, 5, conv_strides=2),
-              lif(), synapse=synapse(), record_spikes=True, name="conv1")
-        Layer(Conv2D(spiking_weights, 16, 3, conv_padding="same"),
-              lif(), synapse=synapse(), record_spikes=True, name="conv2")
-        Layer(AvgPoolConv2D(spiking_weights, 8, 2, 3, conv_padding="same", sum=True),
-              lif(), synapse=synapse(), record_spikes=True, name="conv3")
-        Layer(AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True, flatten=True),
-              lif(), synapse=synapse(), record_spikes=True, name="hidden")
-        Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD)),
+        Layer(Conv2D(spiking_weights, 16, 5, conv_strides=2, **delay("conv1")),
+              lif(), synapse=synapse(), record_spikes=True, name="conv1",
+              **layer_delay("conv1"))
+        Layer(Conv2D(spiking_weights, 16, 3, conv_padding="same", **delay("conv2")),
+              lif(), synapse=synapse(), record_spikes=True, name="conv2",
+              **layer_delay("conv2"))
+        Layer(AvgPoolConv2D(spiking_weights, 8, 2, 3, conv_padding="same", sum=True,
+                            **delay("conv3")),
+              lif(), synapse=synapse(), record_spikes=True, name="conv3",
+              **layer_delay("conv3"))
+        Layer(AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True, flatten=True,
+                            **delay("hidden")),
+              lif(), synapse=synapse(), record_spikes=True, name="hidden",
+              **layer_delay("hidden"))
+        Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD), **delay("output")),
               LeakyIntegrate(tau_mem=TAU_MEM_MS, readout="avg_var_exp_weight"),
-              NUM_CLASSES, synapse=synapse(), name="output")
+              NUM_CLASSES, synapse=synapse(), name="output", **layer_delay("output"))
     return network
 
 
+def delay_connections(network):
+    """Connections built with a delay buffer, i.e. those that learn delays."""
+    return [c for c in network.connections if c.max_delay_steps is not None]
+
+
 def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
-                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED):
+                         reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED,
+                         delay_learning_rate=DELAY_LEARNING_RATE):
 
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
@@ -64,8 +99,10 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
         dt=BIN_MS, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)
     adam = Adam(alpha=LEARNING_RATE)
-    return compiler.compile(network, name="dvs_gesture_train",
-                            optimisers={"all_connections": {"weight": adam}},
+    optimisers = {"all_connections": {"weight": adam}}
+    for connection in delay_connections(network):
+        optimisers[connection] = {"delay": Adam(alpha=delay_learning_rate)}
+    return compiler.compile(network, name="dvs_gesture_train", optimisers=optimisers,
                             regularisers={"all_hidden_populations": regulariser})
 
 
