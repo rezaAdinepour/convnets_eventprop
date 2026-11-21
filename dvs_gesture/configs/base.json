@@ -12,6 +12,7 @@
   "downsample": "pool",
   "tau_mem_ms": 20.0,
   "tau_syn_ms": 5.0,
+  "spiking_weight_sd": 0.375,
   "evd_tau_theta_ms": 420.0,
   "evd_tau_accumulator_ms": 16.0,
   "evd_beta": 1.2

@@ -40,11 +40,15 @@ DOWNSAMPLING = ("pool", "stride", "conv3-stride")
 
 def build_network(max_input_spikes_per_batch, delay_layers=(),
                   max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS,
-                  downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS):
+                  downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS,
+                  spiking_weight_sd=SPIKING_WEIGHT_SD):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
 
     ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
-    ``TAU_MEM_MS``), ``tau_syn_ms`` to every synapse.
+    ``TAU_MEM_MS``), ``tau_syn_ms`` to every synapse. An input spike moves v by
+    about weight * tau_syn / tau_mem, so a longer tau_mem needs a proportionally
+    larger ``spiking_weight_sd`` (initial weight sd of the spiking layers) to
+    start with the same activity.
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
@@ -72,7 +76,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
             return {}
         return dict(max_delay_steps=round(max_delay_ms / BIN_MS))
 
-    spiking_weights = Normal(mean=0.0, sd=SPIKING_WEIGHT_SD)
+    spiking_weights = Normal(mean=0.0, sd=spiking_weight_sd)
     network = SequentialNetwork()
     with network:
         InputLayer(SpikeInput(max_spikes=max_input_spikes_per_batch), INPUT_SHAPE, name="input")

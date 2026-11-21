@@ -15,8 +15,8 @@ from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, encode_reco
                   load_dataset, max_spikes_per_neuron, split_train_validation)
 from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
                    DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH,
-                   REG_TARGET, SEED, TAU_MEM_MS, TAU_SYN_MS, build_network,
-                   compile_for_training, delay_connections)
+                   REG_TARGET, SEED, SPIKING_WEIGHT_SD, TAU_MEM_MS, TAU_SYN_MS,
+                   build_network, compile_for_training, delay_connections)
 
 LR_SCHEDULES = ("constant", "cosine")
 
@@ -92,6 +92,7 @@ class AdjointLimitLog(Callback):
     def __init__(self, log, hidden_layers):
         self.log = log
         self.hidden_layers = hidden_layers
+        self.blocked = []
 
     def create_state(self, compiled_network, **kwargs):
         self.pops = [compiled_network.neuron_populations[layer] for layer in self.hidden_layers]
@@ -111,11 +112,16 @@ class AdjointLimitLog(Callback):
         self.batches += 1
 
     def on_epoch_end(self, compiled_network, epoch, metrics):
+        # A limit of exactly 0 clamps every later jump to 0, so it never recovers.
+        self.blocked = []
         for layer, pop, zero in zip(self.hidden_layers, self.pops, self.zero):
             limit = pop.vars["LambdavLimit"]
             limit.pull_from_device()
-            self.log.write(epoch=epoch, layer=layer.name, limit=float(np.max(limit.values)),
+            limit = float(np.max(limit.values))
+            self.log.write(epoch=epoch, layer=layer.name, limit=limit,
                            zero_fraction=zero / max(self.batches, 1))
+            if limit == 0.0:
+                self.blocked.append(layer.name)
 
 
 class BackwardLimitRecorder(Callback):
@@ -248,6 +254,8 @@ def main():
                         help="Membrane time constant of the spiking layers")
     parser.add_argument("--tau-syn-ms", type=float, default=TAU_SYN_MS,
                         help="Synaptic time constant")
+    parser.add_argument("--spiking-weight-sd", type=float, default=SPIKING_WEIGHT_SD,
+                        help="Initial weight sd of the spiking layers (scale with tau_mem)")
     parser.add_argument("--evd-tau-theta-ms", type=float, default=TAU_THETA_MS,
                         help="EvDownsampling adaptive-threshold time constant")
     parser.add_argument("--evd-tau-accumulator-ms", type=float, default=TAU_ACCUMULATOR_MS,
@@ -318,12 +326,13 @@ def main():
         delay_lr=args.delay_lr, lr=args.lr, lr_schedule=args.lr_schedule,
         warmup_epochs=args.warmup_epochs, downsample=args.downsample,
         hidden=not args.no_hidden, tau_mem_ms=args.tau_mem_ms, tau_syn_ms=args.tau_syn_ms,
-        evd_params=evd_params, config=config_path, run=args.run,
+        spiking_weight_sd=args.spiking_weight_sd, evd_params=evd_params,
+        config=config_path, run=args.run,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
                             args.init_delay_ms, args.downsample, not args.no_hidden,
-                            args.tau_mem_ms, args.tau_syn_ms)
+                            args.tau_mem_ms, args.tau_syn_ms, args.spiking_weight_sd)
     print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
@@ -351,8 +360,8 @@ def main():
         compiled.save(("initial",), Numpy("checkpoints"))
         for epoch in range(args.epochs):
             start = perf_counter()
-            callbacks = ["batch_progress_bar", checkpoint, schedule,
-                         AdjointLimitLog(limit_log, hidden_layers),
+            limit_logger = AdjointLimitLog(limit_log, hidden_layers)
+            callbacks = ["batch_progress_bar", checkpoint, schedule, limit_logger,
                          *spike_recorders(hidden_layers, "train", len(train_x))]
             if delay_log is not None:
                 callbacks.append(DelayLog(delay_log, delay_connections(network)))
@@ -395,6 +404,9 @@ def main():
             validation = f", validation {val_correct}/{val_total}" if val_total else ""
             print(f"Epoch {epoch}: train {train.correct}/{train.total}{validation}, "
                   f"train loss {train_loss:.4f}")
+            if limit_logger.blocked:
+                raise RuntimeError(f"LambdavLimit of {', '.join(limit_logger.blocked)} is 0 after "
+                                   f"epoch {epoch}: no loss gradient passes through it any more")
 
 
 if __name__ == "__main__":

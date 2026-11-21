@@ -130,8 +130,18 @@ python3 sweep.py configs/sweep_stage_h.json grad_100    # only some
 ```
 
 Besides the options above, the configs can set `tau_mem_ms` (spiking layers; the
-output readout keeps 20 ms), `tau_syn_ms` and the EvDownsampling parameters
+output readout keeps 20 ms), `tau_syn_ms`, `spiking_weight_sd` (initial weight sd of
+the spiking layers, default 0.375) and the EvDownsampling parameters
 `evd_tau_theta_ms`, `evd_tau_accumulator_ms` and `evd_beta` (defaults 420, 16, 1.2).
+
+mlGeNN's LIF neuron integrates `dv/dt = (-v + Isyn) / tau_mem`, so an input spike
+moves `v` by about `weight * tau_syn / tau_mem`. A longer `tau_mem` with the same
+weights starts almost silent: with `tau_mem_ms` 50 and sd 0.375 (run
+`20261121_193931`, 2 epochs) the hidden layer fired 3.4 spikes per neuron in epoch 0
+instead of 87. Its `LambdavLimit` was 0 in both epochs, with every lambda_V zero. A zero
+limit clamps every later adjoint jump to 0, so no loss gradient passed through the hidden
+layer again. The `tau_mem` sweep runs therefore scale `spiking_weight_sd` with
+`tau_mem`, and training stops with an error when any layer's limit reaches 0.
 
 Encoded recordings are cached in `Experiments/dvs_gesture_encoding_cache/`
 (override with `CACHE_DIR=...`), one file per split, encoding, `--trial-ms` / `--crop-ms`
