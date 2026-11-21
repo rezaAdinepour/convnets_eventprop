@@ -40,8 +40,11 @@ DOWNSAMPLING = ("pool", "stride", "conv3-stride")
 
 def build_network(max_input_spikes_per_batch, delay_layers=(),
                   max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS,
-                  downsample="pool", hidden=True):
+                  downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
+
+    ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
+    ``TAU_MEM_MS``), ``tau_syn_ms`` to every synapse.
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
@@ -52,10 +55,10 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     layer. ``hidden=False`` drops the hidden layer (conv3 -> output).
     """
     def lif():
-        return LeakyIntegrateFire(v_thresh=1.0, tau_mem=TAU_MEM_MS)
+        return LeakyIntegrateFire(v_thresh=1.0, tau_mem=tau_mem_ms)
 
     def synapse():
-        return Exponential(TAU_SYN_MS)
+        return Exponential(tau_syn_ms)
 
     def delay(name):
         # A constant delay would make mlGeNN skip the delayed adjoint lookup,

@@ -9,9 +9,10 @@ from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 from tonic.datasets import DVSGesture
 
-from data import NUM_CLASSES, encode_recordings, load_dataset, split_train_validation
-from model import (BATCH_SIZE, MAX_DELAY_MS, build_network, compile_for_inference,
-                   delay_connections)
+from data import (EVDOWNSAMPLING_PARAMS, NUM_CLASSES, encode_recordings, load_dataset,
+                  split_train_validation)
+from model import (BATCH_SIZE, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
+                   compile_for_inference, delay_connections)
 
 
 def best_epoch(run_dir):
@@ -47,7 +48,8 @@ def main():
     x, y, lengths = encode_recordings(dataset, indices, config["encoding"],
                                       trial_ms=config.get("trial_ms"),
                                       cache_dir=config.get("cache_dir"),
-                                      crop_ms=config.get("crop_ms"))
+                                      crop_ms=config.get("crop_ms"),
+                                      evd_params=config.get("evd_params", EVDOWNSAMPLING_PARAMS))
 
     timesteps = config["example_timesteps"]
     if lengths.max() > timesteps:
@@ -57,7 +59,9 @@ def main():
     network = build_network(BATCH_SIZE * calc_max_spikes(x), config.get("delay_layers", []),
                             config.get("max_delay_ms", MAX_DELAY_MS),
                             downsample=config.get("downsample", "pool"),
-                            hidden=config.get("hidden", True))
+                            hidden=config.get("hidden", True),
+                            tau_mem_ms=config.get("tau_mem_ms", TAU_MEM_MS),
+                            tau_syn_ms=config.get("tau_syn_ms", TAU_SYN_MS))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
         # Training rounds the learned delays the same way (EventPropCompiler)

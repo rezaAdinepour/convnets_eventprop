@@ -108,11 +108,34 @@ shuffle means a different set of recordings is affected each epoch.
 
 ```bash
 cd dvs_gesture
-./run.sh --encoding occupancy --epochs 100
+./run.sh --config configs/base.json
 ```
 
+Settings live in JSON files in `configs/`, with keys named like `train.py`'s options
+(`grad_limit` for `--grad-limit`). Options given on the command line override the file.
+`configs/base.json` is the current best setup (run `20261121_121123`). A sweep file
+extends a base config and lists named runs, each with only the settings it changes:
+
+```json
+{"base": "base.json", "runs": {"lr_6e-3": {"lr": 0.006}, "grad_100": {"grad_limit": 100}}}
+```
+
+`sweep.py` trains its runs one after another with `run.sh` (any Python 3; it only
+starts `run.sh`), naming each directory `dvs_gesture_b32_<date>_<time>_<run>`:
+
+```bash
+python3 sweep.py configs/sweep_stage_h.json             # all runs
+python3 sweep.py configs/sweep_stage_h.json grad_100    # only some
+./run.sh --config configs/sweep_stage_h.json --run grad_100   # one run directly
+```
+
+Besides the options above, the configs can set `tau_mem_ms` (spiking layers; the
+output readout keeps 20 ms), `tau_syn_ms` and the EvDownsampling parameters
+`evd_tau_theta_ms`, `evd_tau_accumulator_ms` and `evd_beta` (defaults 420, 16, 1.2).
+
 Encoded recordings are cached in `Experiments/dvs_gesture_encoding_cache/`
-(override with `CACHE_DIR=...`), one file per split, encoding and `--trial-ms` / `--crop-ms`.
+(override with `CACHE_DIR=...`), one file per split, encoding, `--trial-ms` / `--crop-ms`
+and EvDownsampling parameters.
 The file name contains a hash of the recordings, the preprocessing constants and
 the encoder code, so changing any of them creates a new cache file instead of
 reusing a stale one. `evaluate.py` uses the same cache.
@@ -122,7 +145,7 @@ Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 
 | File | Contents |
 | --- | --- |
-| `run_config.json` | Encoding, trial length, buffer sizes, grad limit, seed |
+| `run_config.json` | All settings used (encoding, trial length, buffer sizes, learning rate, regulariser, time constants, EvDownsampling parameters, seed, ...) and the config file and run name |
 | `metrics.csv` | Per epoch: train and validation correct/total, mean training loss, seconds, weight learning rate (`lr`; absent before stage 4b) |
 | `spikes.csv` | Per epoch, split and hidden layer: mean and max spikes per neuron per gesture, fraction of silent neurons |
 | `adjoint_limits.csv` | Per epoch and hidden layer: EventProp's adaptive adjoint clamp `LambdavLimit`, and the fraction of (neuron, example) pairs whose lambda_V was zero for the whole backward pass (from `LambdavAbsSum`, averaged over batches) |

@@ -1,0 +1,18 @@
+{
+  "encoding": "evdownsampling",
+  "crop_ms": 4000,
+  "epochs": 100,
+  "seed": 1,
+  "lr": 0.003,
+  "lr_schedule": "cosine",
+  "warmup_epochs": 5,
+  "grad_limit": 200,
+  "reg_strength": [5e-9, 5e-9],
+  "reg_target": 100,
+  "downsample": "pool",
+  "tau_mem_ms": 20.0,
+  "tau_syn_ms": 5.0,
+  "evd_tau_theta_ms": 420.0,
+  "evd_tau_accumulator_ms": 16.0,
+  "evd_beta": 1.2
+}

@@ -32,6 +32,7 @@ EVDOWNSAMPLING_REPO = Path(os.environ.get(
 TAU_THETA_MS = 420.0
 TAU_ACCUMULATOR_MS = 16.0
 BETA = 1.2
+EVDOWNSAMPLING_PARAMS = (TAU_THETA_MS, TAU_ACCUMULATOR_MS, BETA)
 
 
 def load_dataset(data_root: Path, train: bool):
@@ -50,18 +51,22 @@ def split_train_validation(dataset):
     return train, validation
 
 
-def create_downsampler(build_dir):
-    """Build the authors' real-time GeNN EvDownsampling model in build_dir."""
+def create_downsampler(build_dir, evd_params=EVDOWNSAMPLING_PARAMS):
+    """Build the authors' real-time GeNN EvDownsampling model in build_dir.
+
+    evd_params is (tau_theta in ms, tau_accumulator in ms, beta).
+    """
     if str(EVDOWNSAMPLING_REPO) not in sys.path:
         sys.path.append(str(EVDOWNSAMPLING_REPO))
     from event_downsampling_genn import EventDownsampleGeNN
 
+    tau_theta, tau_accumulator, beta = evd_params
     build_dir.mkdir(parents=True, exist_ok=True)
     with contextlib.chdir(build_dir):
         return EventDownsampleGeNN(sensor_size=(SENSOR_SIZE, SENSOR_SIZE, 2),
                                    target_size=(SENSOR_SIZE // SPATIAL_FACTOR,) * 2,
-                                   dt=BIN_MS, tau_theta=TAU_THETA_MS,
-                                   tau_accumulator=TAU_ACCUMULATOR_MS, beta=BETA)
+                                   dt=BIN_MS, tau_theta=tau_theta,
+                                   tau_accumulator=tau_accumulator, beta=beta)
 
 
 def evdownsampling_events(downsampler, events, num_bins):
@@ -129,19 +134,21 @@ def crop_events(events, crop_ms):
 
 
 def encode_recordings(dataset, indices, encoding, description="Encoding", trial_ms=None,
-                      cache_dir=None, crop_ms=None):
+                      cache_dir=None, crop_ms=None, evd_params=EVDOWNSAMPLING_PARAMS):
     """Encode the given recordings; return spikes, labels and lengths in bins.
 
     crop_ms keeps only the first crop_ms ms of each recording in real time
-    (instead of compressing it with trial_ms).
+    (instead of compressing it with trial_ms). evd_params are the EvDownsampling
+    parameters, see create_downsampler.
 
     With cache_dir, the result is stored there and reused by later calls with
-    the same recordings, encoding, trial_ms, crop_ms and encoder code.
+    the same recordings, encoding, trial_ms, crop_ms, evd_params and encoder code.
     """
     if trial_ms is not None and crop_ms is not None:
         raise ValueError("Use either trial_ms or crop_ms, not both")
+    evd_params = tuple(float(p) for p in evd_params)
     if cache_dir is not None:
-        key = _cache_key(dataset, indices, encoding, trial_ms, crop_ms)
+        key = _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params)
         length = f"crop{crop_ms}" if crop_ms is not None else (trial_ms or "full")
         cache_file = Path(cache_dir) / f"{encoding}_{length}_{key}.npz"
         if cache_file.exists():
@@ -150,7 +157,8 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
 
     downsampler = None
     if encoding == "evdownsampling":
-        downsampler = create_downsampler(Path(cache_dir or ".").resolve() / "evdownsampling_genn")
+        downsampler = create_downsampler(Path(cache_dir or ".").resolve() / "evdownsampling_genn",
+                                         evd_params)
 
     spikes, labels, lengths = [], [], []
     for i in tqdm(indices, desc=description, unit="recording"):
@@ -171,14 +179,14 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
     return spikes, labels, lengths
 
 
-def _cache_key(dataset, indices, encoding, trial_ms, crop_ms=None):
+def _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params):
     """Hash of everything that determines the encoded spikes."""
     key = hashlib.sha256()
     key.update(repr((encoding, trial_ms, DENOISE_US, SPATIAL_FACTOR, BORDER, INPUT_SHAPE,
                      [str(dataset.data[i]) for i in indices])).encode())
     key.update(inspect.getsource(encode_gesture).encode())
     if encoding == "evdownsampling":
-        key.update(repr((TAU_THETA_MS, TAU_ACCUMULATOR_MS, BETA)).encode())
+        key.update(repr(evd_params).encode())
         key.update(inspect.getsource(evdownsampling_events).encode())
         key.update((EVDOWNSAMPLING_REPO / "event_downsampling_genn.py").read_bytes())
     if crop_ms is not None:

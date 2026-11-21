@@ -11,14 +11,48 @@ from ml_genn.callbacks import (Callback, Checkpoint, OptimiserParamSchedule, Spi
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
-from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_neuron,
-                  split_train_validation)
+from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, encode_recordings,
+                  load_dataset, max_spikes_per_neuron, split_train_validation)
 from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
                    DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH,
-                   REG_TARGET, SEED, build_network, compile_for_training,
-                   delay_connections)
+                   REG_TARGET, SEED, TAU_MEM_MS, TAU_SYN_MS, build_network,
+                   compile_for_training, delay_connections)
 
 LR_SCHEDULES = ("constant", "cosine")
+
+
+def load_config(path, run=None):
+    """Read a JSON config of settings named like train.py's options (grad_limit, ...).
+
+    "base" names another config, relative to this one, whose settings this one
+    overrides. "runs" maps run names to the settings that each run changes.
+    """
+    config = json.loads(path.read_text())
+    base, runs = config.pop("base", None), config.pop("runs", None)
+    if base is not None:
+        config = {**load_config(path.parent / base), **config}
+    if runs is None:
+        if run is not None:
+            raise ValueError(f"{path} has no runs, so --run {run} is not possible")
+        return config
+    if run not in runs:
+        raise ValueError(f"{path} needs --run, one of: {', '.join(runs)}")
+    return {**config, **runs[run]}
+
+
+def apply_config(parser, config):
+    """Make the config's settings the defaults, so command-line options still override them."""
+    actions = {action.dest: action for action in parser._actions if action.option_strings}
+    for key, value in config.items():
+        action = actions.get(key)
+        if action is None or key in ("config", "run", "help"):
+            parser.error(f"Unknown config setting {key!r}")
+        values = value if isinstance(value, list) else [value]
+        if isinstance(action.nargs, int) and action.nargs > 0 and len(values) != action.nargs:
+            parser.error(f"Config setting {key!r} needs {action.nargs} values")
+        if action.choices is not None and any(v not in action.choices for v in values):
+            parser.error(f"Config setting {key!r} must be one of {list(action.choices)}")
+    parser.set_defaults(**config)
 
 
 def lr_factor(epoch, schedule, epochs, warmup_epochs):
@@ -166,6 +200,10 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
     parser.add_argument("run_dir", type=Path, help="New directory for this run's outputs")
+    parser.add_argument("--config", type=Path, default=None,
+                        help="JSON file of settings (see load_config); options given here "
+                             "override it")
+    parser.add_argument("--run", default=None, help="Run name from the config's runs")
     parser.add_argument("--encoding", choices=ENCODINGS, default="occupancy")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT,
@@ -206,6 +244,25 @@ def main():
                              "conv3-stride: stride-2 conv3, pooled hidden layer")
     parser.add_argument("--no-hidden", action="store_true",
                         help="Drop the 256-neuron hidden layer (conv3 -> output)")
+    parser.add_argument("--tau-mem-ms", type=float, default=TAU_MEM_MS,
+                        help="Membrane time constant of the spiking layers")
+    parser.add_argument("--tau-syn-ms", type=float, default=TAU_SYN_MS,
+                        help="Synaptic time constant")
+    parser.add_argument("--evd-tau-theta-ms", type=float, default=TAU_THETA_MS,
+                        help="EvDownsampling adaptive-threshold time constant")
+    parser.add_argument("--evd-tau-accumulator-ms", type=float, default=TAU_ACCUMULATOR_MS,
+                        help="EvDownsampling accumulator time constant")
+    parser.add_argument("--evd-beta", type=float, default=BETA,
+                        help="EvDownsampling threshold adaptation scale")
+
+    known, _ = parser.parse_known_args()
+    if known.config is not None:
+        try:
+            apply_config(parser, load_config(known.config, known.run))
+        except ValueError as error:
+            parser.error(str(error))
+    elif known.run is not None:
+        parser.error("--run needs --config")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
     if args.seed == 0:
@@ -216,16 +273,20 @@ def main():
         parser.error("--warmup-epochs must be in [0, --epochs)")
 
     np.random.seed(args.seed)
+    config_path = str(args.config.resolve()) if args.config else None
+    if config_path:
+        print(f"Config: {config_path}" + (f", run {args.run}" if args.run else ""))
 
     dataset = load_dataset(args.data_root.resolve(), train=True)
     train_idx, val_idx = split_train_validation(dataset)
     cache_dir = args.cache_dir.resolve() if args.cache_dir else None
+    evd_params = (args.evd_tau_theta_ms, args.evd_tau_accumulator_ms, args.evd_beta)
     train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
                                                     "Encoding training", args.trial_ms,
-                                                    cache_dir, args.crop_ms)
+                                                    cache_dir, args.crop_ms, evd_params)
     val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
                                               "Encoding validation", args.trial_ms,
-                                              cache_dir, args.crop_ms)
+                                              cache_dir, args.crop_ms, evd_params)
 
     example_timesteps = int(max(train_len.max(), val_len.max()))
     if args.train_all:
@@ -256,11 +317,13 @@ def main():
         max_delay_ms=args.max_delay_ms, init_delay_ms=args.init_delay_ms,
         delay_lr=args.delay_lr, lr=args.lr, lr_schedule=args.lr_schedule,
         warmup_epochs=args.warmup_epochs, downsample=args.downsample,
-        hidden=not args.no_hidden,
+        hidden=not args.no_hidden, tau_mem_ms=args.tau_mem_ms, tau_syn_ms=args.tau_syn_ms,
+        evd_params=evd_params, config=config_path, run=args.run,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
-                            args.init_delay_ms, args.downsample, not args.no_hidden)
+                            args.init_delay_ms, args.downsample, not args.no_hidden,
+                            args.tau_mem_ms, args.tau_syn_ms)
     print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]

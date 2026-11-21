@@ -1,0 +1,15 @@
+{
+  "base": "base.json",
+  "runs": {
+    "lr_6e-3": {"lr": 0.006},
+    "lr_1e-2": {"lr": 0.01},
+    "reg_1e-9": {"reg_strength": [1e-9, 1e-9]},
+    "reg_2.5e-8": {"reg_strength": [2.5e-8, 2.5e-8]},
+    "grad_100": {"grad_limit": 100},
+    "grad_1000": {"grad_limit": 1000},
+    "tau_mem_50": {"tau_mem_ms": 50.0},
+    "tau_mem_100": {"tau_mem_ms": 100.0},
+    "evd_beta_2.4": {"evd_beta": 2.4},
+    "evd_beta_0.6": {"evd_beta": 0.6}
+  }
+}
