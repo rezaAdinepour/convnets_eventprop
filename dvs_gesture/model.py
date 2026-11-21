@@ -35,7 +35,7 @@ MAX_DELAY_MS = 150.0
 INIT_DELAY_MS = 50.0
 DELAY_LEARNING_RATE = 0.1
 
-DOWNSAMPLING = ("pool", "stride")
+DOWNSAMPLING = ("pool", "stride", "conv3-stride")
 
 
 def build_network(max_input_spikes_per_batch, delay_layers=(),
@@ -48,7 +48,8 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
 
     ``downsample="stride"`` replaces the two 2x2 sum-pools: conv3 becomes a
     stride-2 valid 3x3 convolution (15x15 -> 7x7x8) and the hidden layer a Dense
-    392 -> 256. ``hidden=False`` drops the hidden layer (conv3 -> output).
+    392 -> 256. ``"conv3-stride"`` strides conv3 only and keeps the pooled hidden
+    layer. ``hidden=False`` drops the hidden layer (conv3 -> output).
     """
     def lif():
         return LeakyIntegrateFire(v_thresh=1.0, tau_mem=TAU_MEM_MS)
@@ -86,7 +87,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
         Layer(conv3, lif(), synapse=synapse(), record_spikes=True, name="conv3",
               **layer_delay("conv3"))
         if hidden:
-            if downsample == "pool":
+            if downsample != "stride":
                 connectivity = AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True,
                                              flatten=True, **delay("hidden"))
             else:

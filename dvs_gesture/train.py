@@ -202,7 +202,8 @@ def main():
     parser.add_argument("--warmup-epochs", type=int, default=0,
                         help="Ramp the learning rates up linearly over this many epochs")
     parser.add_argument("--downsample", choices=DOWNSAMPLING, default="pool",
-                        help="stride: stride-2 conv3 and a Dense hidden layer, no pooling")
+                        help="stride: stride-2 conv3 and a Dense hidden layer, no pooling; "
+                             "conv3-stride: stride-2 conv3, pooled hidden layer")
     parser.add_argument("--no-hidden", action="store_true",
                         help="Drop the 256-neuron hidden layer (conv3 -> output)")
     args = parser.parse_args()

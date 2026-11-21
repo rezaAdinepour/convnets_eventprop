@@ -86,6 +86,7 @@ Stage-5 variants (`--downsample`, `--no-hidden`), all with the same conv1 and co
 |---|---|---|---|---|
 | `pool` (default) | 2x2 sum-pool + 3x3 same -> 7x7x8 | 2x2 sum-pool + 3x3 valid (72 -> 256) | 256 -> 11 | 25,504 |
 | `--downsample stride` | 3x3 valid, stride 2 -> 7x7x8 | Dense 392 -> 256 | 256 -> 11 | 107,424 |
+| `--downsample conv3-stride` | 3x3 valid, stride 2 -> 7x7x8 | as `pool` | 256 -> 11 | 25,504 |
 | `--no-hidden` | as `pool` | none | 392 -> 11 | 8,568 |
 
 Strided conv3 sees no sum-pool, so each weight gets a quarter of the presynaptic
