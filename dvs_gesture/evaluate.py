@@ -55,7 +55,9 @@ def main():
               f"{timesteps} ms training trial and will be truncated")
 
     network = build_network(BATCH_SIZE * calc_max_spikes(x), config.get("delay_layers", []),
-                            config.get("max_delay_ms", MAX_DELAY_MS))
+                            config.get("max_delay_ms", MAX_DELAY_MS),
+                            downsample=config.get("downsample", "pool"),
+                            hidden=config.get("hidden", True))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
         # Training rounds the learned delays the same way (EventPropCompiler)

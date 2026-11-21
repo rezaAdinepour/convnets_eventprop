@@ -80,6 +80,17 @@ Same layer sizes as the reference model (`ml_genn` branch `sirine_dvs_gesture`,
   is combined with a rank-4 Toeplitz `AvgPoolConv2D` in one training model; alone
   it builds (`check_build.py`, commit `c277896`).
 
+Stage-5 variants (`--downsample`, `--no-hidden`), all with the same conv1 and conv2:
+
+| Variant | conv3 | hidden | output | Trainable weights |
+|---|---|---|---|---|
+| `pool` (default) | 2x2 sum-pool + 3x3 same -> 7x7x8 | 2x2 sum-pool + 3x3 valid (72 -> 256) | 256 -> 11 | 25,504 |
+| `--downsample stride` | 3x3 valid, stride 2 -> 7x7x8 | Dense 392 -> 256 | 256 -> 11 | 107,424 |
+| `--no-hidden` | as `pool` | none | 392 -> 11 | 8,568 |
+
+Strided conv3 sees no sum-pool, so each weight gets a quarter of the presynaptic
+spikes that the pooled version gets; the initial weight sd (0.375) is unchanged.
+
 ## Training setup
 
 Batch size 32, Adam (lr 0.001, constant by default; see `--lr`, `--lr-schedule cosine`

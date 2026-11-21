@@ -14,8 +14,9 @@ from ml_genn.utils.data import calc_max_spikes
 from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_neuron,
                   split_train_validation)
 from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
-                   LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED,
-                   build_network, compile_for_training, delay_connections)
+                   DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH,
+                   REG_TARGET, SEED, build_network, compile_for_training,
+                   delay_connections)
 
 LR_SCHEDULES = ("constant", "cosine")
 
@@ -200,6 +201,10 @@ def main():
                         help="cosine decays every learning rate towards 0 at --epochs")
     parser.add_argument("--warmup-epochs", type=int, default=0,
                         help="Ramp the learning rates up linearly over this many epochs")
+    parser.add_argument("--downsample", choices=DOWNSAMPLING, default="pool",
+                        help="stride: stride-2 conv3 and a Dense hidden layer, no pooling")
+    parser.add_argument("--no-hidden", action="store_true",
+                        help="Drop the 256-neuron hidden layer (conv3 -> output)")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
     if args.seed == 0:
@@ -249,11 +254,13 @@ def main():
         lambda_epochs=args.lambda_epochs, delay_layers=args.delay_layers,
         max_delay_ms=args.max_delay_ms, init_delay_ms=args.init_delay_ms,
         delay_lr=args.delay_lr, lr=args.lr, lr_schedule=args.lr_schedule,
-        warmup_epochs=args.warmup_epochs,
+        warmup_epochs=args.warmup_epochs, downsample=args.downsample,
+        hidden=not args.no_hidden,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
-                            args.init_delay_ms)
+                            args.init_delay_ms, args.downsample, not args.no_hidden)
+    print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,

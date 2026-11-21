@@ -35,13 +35,20 @@ MAX_DELAY_MS = 150.0
 INIT_DELAY_MS = 50.0
 DELAY_LEARNING_RATE = 0.1
 
+DOWNSAMPLING = ("pool", "stride")
+
 
 def build_network(max_input_spikes_per_batch, delay_layers=(),
-                  max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS):
+                  max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS,
+                  downsample="pool", hidden=True):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
+
+    ``downsample="stride"`` replaces the two 2x2 sum-pools: conv3 becomes a
+    stride-2 valid 3x3 convolution (15x15 -> 7x7x8) and the hidden layer a Dense
+    392 -> 256. ``hidden=False`` drops the hidden layer (conv3 -> output).
     """
     def lif():
         return LeakyIntegrateFire(v_thresh=1.0, tau_mem=TAU_MEM_MS)
@@ -71,14 +78,21 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
         Layer(Conv2D(spiking_weights, 16, 3, conv_padding="same", **delay("conv2")),
               lif(), synapse=synapse(), record_spikes=True, name="conv2",
               **layer_delay("conv2"))
-        Layer(AvgPoolConv2D(spiking_weights, 8, 2, 3, conv_padding="same", sum=True,
-                            **delay("conv3")),
-              lif(), synapse=synapse(), record_spikes=True, name="conv3",
+        if downsample == "pool":
+            conv3 = AvgPoolConv2D(spiking_weights, 8, 2, 3, conv_padding="same", sum=True,
+                                  **delay("conv3"))
+        else:
+            conv3 = Conv2D(spiking_weights, 8, 3, conv_strides=2, **delay("conv3"))
+        Layer(conv3, lif(), synapse=synapse(), record_spikes=True, name="conv3",
               **layer_delay("conv3"))
-        Layer(AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True, flatten=True,
-                            **delay("hidden")),
-              lif(), synapse=synapse(), record_spikes=True, name="hidden",
-              **layer_delay("hidden"))
+        if hidden:
+            if downsample == "pool":
+                connectivity = AvgPoolConv2D(spiking_weights, 256, 2, 3, sum=True,
+                                             flatten=True, **delay("hidden"))
+            else:
+                connectivity = Dense(spiking_weights, **delay("hidden"))
+            Layer(connectivity, lif(), 256, synapse=synapse(), record_spikes=True,
+                  name="hidden", **layer_delay("hidden"))
         Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD), **delay("output")),
               LeakyIntegrate(tau_mem=TAU_MEM_MS, readout="avg_var_exp_weight"),
               NUM_CLASSES, synapse=synapse(), name="output", **layer_delay("output"))
