@@ -92,7 +92,8 @@ def delay_connections(network):
 
 def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
                          reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED,
-                         delay_learning_rate=DELAY_LEARNING_RATE):
+                         delay_learning_rate=DELAY_LEARNING_RATE,
+                         learning_rate=LEARNING_RATE):
 
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
@@ -101,7 +102,7 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
         losses=SparseCategoricalCrossentropy(record_key="loss"),
         dt=BIN_MS, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)
-    adam = Adam(alpha=LEARNING_RATE)
+    adam = Adam(alpha=learning_rate)
     optimisers = {"all_connections": {"weight": adam}}
     for connection in delay_connections(network):
         optimisers[connection] = {"delay": Adam(alpha=delay_learning_rate)}

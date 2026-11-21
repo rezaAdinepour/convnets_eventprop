@@ -6,15 +6,35 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-from ml_genn.callbacks import Callback, Checkpoint, SpikeRecorder, VarRecorder
+from ml_genn.callbacks import (Callback, Checkpoint, OptimiserParamSchedule, SpikeRecorder,
+                               VarRecorder)
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
 from data import (ENCODINGS, encode_recordings, load_dataset, max_spikes_per_neuron,
                   split_train_validation)
 from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
-                   MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED, build_network,
-                   compile_for_training, delay_connections)
+                   LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH, REG_TARGET, SEED,
+                   build_network, compile_for_training, delay_connections)
+
+LR_SCHEDULES = ("constant", "cosine")
+
+
+def lr_factor(epoch, schedule, epochs, warmup_epochs):
+    """Learning rate of ``epoch`` relative to the initial one."""
+    if epoch < warmup_epochs:
+        return (epoch + 1) / warmup_epochs
+    if schedule == "cosine":
+        return 0.5 * (1.0 + np.cos(np.pi * (epoch - warmup_epochs) / (epochs - warmup_epochs)))
+    return 1.0
+
+
+def lr_schedule(schedule, epochs, warmup_epochs):
+    # Rescale each optimiser's current alpha, so weight and delay rates keep their ratio.
+    def func(epoch, alpha):
+        previous = lr_factor(epoch - 1, schedule, epochs, warmup_epochs) if epoch > 0 else 1.0
+        return alpha * lr_factor(epoch, schedule, epochs, warmup_epochs) / previous
+    return OptimiserParamSchedule("alpha", func)
 
 
 class CSVLog:
@@ -174,12 +194,20 @@ def main():
                         help="Initial delays are drawn from U(0, this)")
     parser.add_argument("--delay-lr", type=float, default=DELAY_LEARNING_RATE,
                         help="Adam learning rate for delays (in timesteps)")
+    parser.add_argument("--lr", type=float, default=LEARNING_RATE,
+                        help="Initial (after warm-up: peak) Adam learning rate for weights")
+    parser.add_argument("--lr-schedule", choices=LR_SCHEDULES, default="constant",
+                        help="cosine decays every learning rate towards 0 at --epochs")
+    parser.add_argument("--warmup-epochs", type=int, default=0,
+                        help="Ramp the learning rates up linearly over this many epochs")
     args = parser.parse_args()
     args.reg_strength = tuple(args.reg_strength)
     if args.seed == 0:
         parser.error("--seed 0 makes GeNN pick a random seed")
     if args.delay_layers and not 0 < args.init_delay_ms <= args.max_delay_ms:
         parser.error("--init-delay-ms must be in (0, --max-delay-ms]")
+    if not 0 <= args.warmup_epochs < args.epochs:
+        parser.error("--warmup-epochs must be in [0, --epochs)")
 
     np.random.seed(args.seed)
 
@@ -220,7 +248,8 @@ def main():
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
         lambda_epochs=args.lambda_epochs, delay_layers=args.delay_layers,
         max_delay_ms=args.max_delay_ms, init_delay_ms=args.init_delay_ms,
-        delay_lr=args.delay_lr,
+        delay_lr=args.delay_lr, lr=args.lr, lr_schedule=args.lr_schedule,
+        warmup_epochs=args.warmup_epochs,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
@@ -229,10 +258,10 @@ def main():
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,
                                     args.reg_strength, args.reg_target, args.seed,
-                                    args.delay_lr)
+                                    args.delay_lr, args.lr)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
-                                         "val_correct", "val_total", "seconds"])
+                                         "val_correct", "val_total", "seconds", "lr"])
     spikes_log = CSVLog("spikes.csv", ["epoch", "split", "layer", "mean_per_neuron",
                                        "max_per_neuron", "silent_fraction"])
     limit_log = CSVLog("adjoint_limits.csv", ["epoch", "layer", "limit", "zero_fraction"])
@@ -245,12 +274,13 @@ def main():
         delay_log = CSVLog("delays.csv", ["epoch", "layer", "count", "mean", "sd", "p50",
                                           "p95", "at_zero", "at_max"])
     checkpoint = Checkpoint(Numpy("checkpoints"))
+    schedule = lr_schedule(args.lr_schedule, args.epochs, args.warmup_epochs)
 
     with compiled:
         compiled.save(("initial",), Numpy("checkpoints"))
         for epoch in range(args.epochs):
             start = perf_counter()
-            callbacks = ["batch_progress_bar", checkpoint,
+            callbacks = ["batch_progress_bar", checkpoint, schedule,
                          AdjointLimitLog(limit_log, hidden_layers),
                          *spike_recorders(hidden_layers, "train", len(train_x))]
             if delay_log is not None:
@@ -283,7 +313,8 @@ def main():
                 val_total = val_metrics[output_pop].total
             metrics_log.write(epoch=epoch, train_correct=train.correct, train_total=train.total,
                               train_loss=train_loss, val_correct=val_correct,
-                              val_total=val_total, seconds=round(perf_counter() - start, 1))
+                              val_total=val_total, seconds=round(perf_counter() - start, 1),
+                              lr=compiled.optimiser_state[0].alpha)
             log_spike_counts(spikes_log, epoch, "train", train_data, hidden_layers)
             if trace:
                 log_lambda_trace(lambda_log, epoch, train_data, limit_recorder.limits,

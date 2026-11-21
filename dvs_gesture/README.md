@@ -82,7 +82,8 @@ Same layer sizes as the reference model (`ml_genn` branch `sirine_dvs_gesture`,
 
 ## Training setup
 
-Batch size 32, Adam (lr 0.001), sparse categorical cross-entropy on the
+Batch size 32, Adam (lr 0.001, constant by default; see `--lr`, `--lr-schedule cosine`
+and `--warmup-epochs`), sparse categorical cross-entropy on the
 `avg_var_exp_weight` readout, LIF hidden neurons (tau_mem 20 ms, exponential
 synapses 5 ms), `strict_buffer_checking=True`, `max_spikes=6242`. Training data
 is reshuffled every epoch (`shuffle=True`).
@@ -110,7 +111,7 @@ Each run creates `Experiments/dvs_gesture_b32_<date>_<time>/` with
 | File | Contents |
 | --- | --- |
 | `run_config.json` | Encoding, trial length, buffer sizes, grad limit, seed |
-| `metrics.csv` | Per epoch: train and validation correct/total, mean training loss, seconds |
+| `metrics.csv` | Per epoch: train and validation correct/total, mean training loss, seconds, weight learning rate (`lr`; absent before stage 4b) |
 | `spikes.csv` | Per epoch, split and hidden layer: mean and max spikes per neuron per gesture, fraction of silent neurons |
 | `adjoint_limits.csv` | Per epoch and hidden layer: EventProp's adaptive adjoint clamp `LambdavLimit`, and the fraction of (neuron, example) pairs whose lambda_V was zero for the whole backward pass (from `LambdavAbsSum`, averaged over batches) |
 | `lambda_trace.csv` | Only with `--lambda-epochs`: for the first training example of those epochs, per hidden layer, the clamp used, its forward spikes, the fraction of (timestep, neuron) entries with lambda_V = 0, neurons with lambda_V = 0 throughout, jumps clipped to exactly +/-`LambdavLimit` (total and per forward spike), and median / max abs lambda_V |
