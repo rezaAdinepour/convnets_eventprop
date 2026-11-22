@@ -397,3 +397,20 @@ Grad limit and regulariser strength are scaled with the window length from the 2
   0.24% of beta * |V| per spike, so it only limits pixels that fire in most bins. beta 2.4 lowers
   the busiest input neuron from 1592 to 1118 spikes per gesture, beta 0.6 leaves it at 1592, and the
   training cache changes by less than 1% in size. Network activity and accuracy match the base run.
+
+### Stage H confirmation: lr 6e-3 with tau_mem 50 ms against the base, 3 seeds (`configs/confirm_stage_h.json`)
+
+| Seed | Base run | Base last 20 | Base train | Combined run | Combined last 20 | Combined train | Best, combined (epoch) |
+|---|---|---|---|---|---|---|---|
+| 1 | `20261121_121123` | 113.2 | 88.6% | `20261122_112809_combo_seed1` | 117.2 | 91.0% | 122 (61) |
+| 2 | `20261122_153744_base_seed2` | 116.8 | 90.9% | `20261122_125045_combo_seed2` | 115.3 | 92.5% | 118 (72) |
+| 3 | `20261122_170635_base_seed3` | 117.0 | 88.2% | `20261122_141441_combo_seed3` | 123.1 | 91.5% | 125 (78) |
+| Mean (sd) | | 115.7 (2.1), 80.9% | 89.2% | | 118.5 (4.1), 82.9% | 91.7% | |
+
+* The combination is 2.9 points (2.0%) higher on the mean, but the paired per-seed differences
+  (+4.0, -1.5, +6.1) are not significant with 3 seeds (t = 1.3, 2 degrees of freedom).
+* Seed 1 is the weakest base seed, so the single-seed sweep overstated both gains
+  (+4.6 and +4.0 against seed 1, +2.9 for both together across seeds).
+* The combination fits the training set better (91.7% vs 89.2%), epochs are 5% faster
+  (50 vs 52 s), and activity at epoch 99 is the same (hidden 98, conv3 82-84 spikes per neuron).
+* The measured seed spread of the base is sd 2.1 (range 3.8) on the last-20 mean.
