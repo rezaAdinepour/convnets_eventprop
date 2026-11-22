@@ -414,3 +414,43 @@ Grad limit and regulariser strength are scaled with the window length from the 2
 * The combination fits the training set better (91.7% vs 89.2%), epochs are 5% faster
   (50 vs 52 s), and activity at epoch 99 is the same (hidden 98, conv3 82-84 spikes per neuron).
 * The measured seed spread of the base is sd 2.1 (range 3.8) on the last-20 mean.
+
+## Stage 6: final models and test set (`configs/stage6_train_all.json`)
+
+All 1077 training recordings (no validation), lr 6e-3 with 5-epoch warm-up and cosine, tau_mem 50 ms,
+weight sd 0.9375, 4 s EvDownsampling, grad limit 200, regulariser 5e-9, 100 epochs. The test set
+(264 recordings, subjects 24-29) was evaluated once per run, at epoch 99, fixed before training
+(`evaluate.py --test`, log in `<run>/test.log`).
+
+| Seed | Run | Train, last 20 | Test |
+|---|---|---|---|
+| 1 | `20261122_184405_final_seed1` | 91.2% | 201/264 (76.1%) |
+| 2 | `20261122_200828_final_seed2` | 93.0% | 206/264 (78.0%) |
+| 3 | `20261122_213150_final_seed3` | 91.9% | 208/264 (78.8%) |
+| Mean (sd) | | 92.0% | 205.0 (3.6), **77.7% (1.4)** |
+
+Per class, summed over the 3 seeds (out of 72):
+
+| Class | Correct | Main confusion |
+|---|---|---|
+| Left arm ccw | 69 (96%) | |
+| Right arm cw | 66 (92%) | |
+| Other gestures | 65 (90%) | |
+| Right hand wave | 64 (89%) | |
+| Right arm ccw | 63 (88%) | right hand wave 7 |
+| Left arm cw | 63 (88%) | |
+| Left hand wave | 53 (74%) | left arm cw 16 |
+| Arm roll | 50 (69%) | other 9, air drums 6, hand clapping 3 |
+| Hand clapping | 44 (61%) | arm roll 10, air drums 7, air guitar 5 |
+| Air guitar | 42 (58%) | other 11, air drums 8 |
+| Air drums | 36 (50%) | arm roll 16, hand clapping 8 |
+
+Per subject, summed over the 3 seeds: 24 70.7%, 25 56.1%, 26 82.4%, 27 76.5%, 28 76.4%, 29 87.9%.
+
+* Test accuracy is 5 points below the 3-seed validation mean of the same configuration (82.9%).
+  The validation set has only 143 recordings (standard error about 3%), and test subjects
+  differ in difficulty by 32 points (subject 25 at 56%, subject 29 at 88%).
+* Clockwise and counter-clockwise rotations of the same arm are rarely confused, so the
+  direction of a movement is learned. The errors concentrate on the two-handed, centred
+  gestures (hand clapping, arm roll, air drums, air guitar), which differ mainly in rhythm,
+  and on left hand wave vs left arm cw (same arm, same region).
