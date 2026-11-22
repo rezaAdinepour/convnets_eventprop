@@ -440,7 +440,7 @@ Per class, summed over the 3 seeds (out of 72):
 | Right arm ccw | 63 (88%) | right hand wave 7 |
 | Left arm cw | 63 (88%) | |
 | Left hand wave | 53 (74%) | left arm cw 16 |
-| Arm roll | 50 (69%) | other 9, air drums 6, hand clapping 3 |
+| Arm roll | 50 (69%) | other 9, hand clapping 6, air drums 5 |
 | Hand clapping | 44 (61%) | arm roll 10, air drums 7, air guitar 5 |
 | Air guitar | 42 (58%) | other 11, air drums 8 |
 | Air drums | 36 (50%) | arm roll 16, hand clapping 8 |
