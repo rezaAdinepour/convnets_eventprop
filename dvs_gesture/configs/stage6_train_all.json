@@ -1,0 +1,12 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "train_all": true,
+  "runs": {
+    "final_seed1": {"seed": 1},
+    "final_seed2": {"seed": 2},
+    "final_seed3": {"seed": 3}
+  }
+}
