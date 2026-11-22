@@ -1,0 +1,10 @@
+{
+  "base": "base.json",
+  "runs": {
+    "combo_seed1": {"lr": 0.006, "tau_mem_ms": 50.0, "spiking_weight_sd": 0.9375, "seed": 1},
+    "combo_seed2": {"lr": 0.006, "tau_mem_ms": 50.0, "spiking_weight_sd": 0.9375, "seed": 2},
+    "combo_seed3": {"lr": 0.006, "tau_mem_ms": 50.0, "spiking_weight_sd": 0.9375, "seed": 3},
+    "base_seed2": {"seed": 2},
+    "base_seed3": {"seed": 3}
+  }
+}
