@@ -11,8 +11,9 @@ from ml_genn.callbacks import (Callback, Checkpoint, OptimiserParamSchedule, Spi
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
-from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, encode_recordings,
-                  load_dataset, max_spikes_per_neuron, split_train_validation)
+from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, augment_spikes,
+                  augmentation_growth, encode_recordings, load_dataset, max_spikes_per_neuron,
+                  split_train_validation)
 from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
                    DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH,
                    REG_TARGET, SEED, SPIKING_WEIGHT_SD, TAU_MEM_MS, TAU_SYN_MS,
@@ -262,6 +263,12 @@ def main():
                         help="EvDownsampling accumulator time constant")
     parser.add_argument("--evd-beta", type=float, default=BETA,
                         help="EvDownsampling threshold adaptation scale")
+    parser.add_argument("--aug-shift-px", type=float, default=0.0,
+                        help="Shift each training recording by up to this many input pixels")
+    parser.add_argument("--aug-zoom", type=float, nargs=2, default=(1.0, 1.0),
+                        help="Range of the random zoom factor of the training recordings")
+    parser.add_argument("--aug-rotate-deg", type=float, default=0.0,
+                        help="Rotate each training recording by up to this many degrees")
 
     known, _ = parser.parse_known_args()
     if known.config is not None:
@@ -279,6 +286,12 @@ def main():
         parser.error("--init-delay-ms must be in (0, --max-delay-ms]")
     if not 0 <= args.warmup_epochs < args.epochs:
         parser.error("--warmup-epochs must be in [0, --epochs)")
+    args.aug_zoom = tuple(args.aug_zoom)
+    if (args.aug_shift_px < 0 or args.aug_rotate_deg < 0
+            or not 0 < args.aug_zoom[0] <= args.aug_zoom[1]):
+        parser.error("--aug-shift-px and --aug-rotate-deg must be >= 0, "
+                     "--aug-zoom needs 0 < low <= high")
+    augment = args.aug_shift_px > 0 or args.aug_rotate_deg > 0 or args.aug_zoom != (1.0, 1.0)
 
     np.random.seed(args.seed)
     config_path = str(args.config.resolve()) if args.config else None
@@ -301,11 +314,17 @@ def main():
         train_x = train_x + val_x
         train_y = np.concatenate((train_y, val_y))
         val_x, val_y = [], val_y[:0]
-    input_buffer = BATCH_SIZE * calc_max_spikes(train_x + val_x)
+    growth = augmentation_growth(args.aug_zoom, args.aug_rotate_deg) if augment else 1
+    input_buffer = BATCH_SIZE * calc_max_spikes(train_x + val_x) * growth
     peak_input = max_spikes_per_neuron(train_x + val_x)
+    train_spikes = sum(len(s.spike_times) for s in train_x)
     print(f"Train: {len(train_x)}, validation: {len(val_x)}, encoding: {args.encoding}")
     print(f"Trial: {example_timesteps} ms, input buffer: {input_buffer} spikes, "
           f"busiest input neuron: {peak_input} spikes per gesture")
+    if augment:
+        print(f"Augmentation: shift +-{args.aug_shift_px} px, zoom {args.aug_zoom[0]}-"
+              f"{args.aug_zoom[1]}, rotation +-{args.aug_rotate_deg} deg")
+    augment_rng = np.random.default_rng(args.seed)
 
     if 2 * peak_input + 2 > MAX_SPIKES:
         raise ValueError(f"An input neuron fires {peak_input} times; "
@@ -327,6 +346,8 @@ def main():
         warmup_epochs=args.warmup_epochs, downsample=args.downsample,
         hidden=not args.no_hidden, tau_mem_ms=args.tau_mem_ms, tau_syn_ms=args.tau_syn_ms,
         spiking_weight_sd=args.spiking_weight_sd, evd_params=evd_params,
+        aug_shift_px=args.aug_shift_px, aug_zoom=args.aug_zoom,
+        aug_rotate_deg=args.aug_rotate_deg,
         config=config_path, run=args.run,
         cache_dir=str(cache_dir) if cache_dir else None), indent=2))
 
@@ -360,6 +381,14 @@ def main():
         compiled.save(("initial",), Numpy("checkpoints"))
         for epoch in range(args.epochs):
             start = perf_counter()
+            epoch_x, kept = train_x, ""
+            if augment:
+                epoch_x = augment_spikes(train_x, augment_rng, args.aug_shift_px,
+                                         args.aug_zoom, args.aug_rotate_deg)
+                if BATCH_SIZE * calc_max_spikes(epoch_x) > input_buffer:
+                    raise ValueError(f"Augmented input needs more than {input_buffer} spikes")
+                kept = sum(len(s.spike_times) for s in epoch_x) / train_spikes
+                kept = f", augmented input keeps {kept:.1%} of the spikes"
             limit_logger = AdjointLimitLog(limit_log, hidden_layers)
             callbacks = ["batch_progress_bar", checkpoint, schedule, limit_logger,
                          *spike_recorders(hidden_layers, "train", len(train_x))]
@@ -371,12 +400,12 @@ def main():
                 callbacks += [limit_recorder, *lambda_recorders(hidden_layers)]
             if args.train_all:
                 train_metrics, train_data = compiled.train(
-                    {input_pop: train_x}, {output_pop: train_y},
+                    {input_pop: epoch_x}, {output_pop: train_y},
                     num_epochs=1, start_epoch=epoch, shuffle=True, callbacks=callbacks)
                 val_metrics, val_data = None, None
             else:
                 train_metrics, val_metrics, train_data, val_data = compiled.train_validate(
-                    {input_pop: train_x}, {output_pop: train_y},
+                    {input_pop: epoch_x}, {output_pop: train_y},
                     validation_x={input_pop: val_x}, validation_y={output_pop: val_y},
                     num_epochs=1, start_epoch=epoch, shuffle=True, callbacks=callbacks,
                     validation_callbacks=spike_recorders(hidden_layers, "validation",
@@ -403,7 +432,7 @@ def main():
                 log_spike_counts(spikes_log, epoch, "validation", val_data, hidden_layers)
             validation = f", validation {val_correct}/{val_total}" if val_total else ""
             print(f"Epoch {epoch}: train {train.correct}/{train.total}{validation}, "
-                  f"train loss {train_loss:.4f}")
+                  f"train loss {train_loss:.4f}{kept}")
             if limit_logger.blocked:
                 raise RuntimeError(f"LambdavLimit of {', '.join(limit_logger.blocked)} is 0 after "
                                    f"epoch {epoch}: no loss gradient passes through it any more")

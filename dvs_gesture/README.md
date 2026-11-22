@@ -134,6 +134,16 @@ output readout keeps 20 ms), `tau_syn_ms`, `spiking_weight_sd` (initial weight s
 the spiking layers, default 0.375) and the EvDownsampling parameters
 `evd_tau_theta_ms`, `evd_tau_accumulator_ms` and `evd_beta` (defaults 420, 16, 1.2).
 
+Training data augmentation (`aug_shift_px`, `aug_zoom` as `[low, high]`, `aug_rotate_deg`;
+off by default) redraws every epoch, per training recording, a shift, zoom and rotation
+of the 32x32 input grid (`data.augment_spikes`). Each input neuron copies the spike train
+of the nearest source pixel with the same polarity, so no neuron fires more often than in
+the cached encoding, and pixels pulled from outside the sensor are silent. Validation and
+test recordings are never augmented. Zoom above 1 or rotation can make several pixels copy
+one source, so the input buffer is then 4x larger, and training stops if an epoch's
+augmented input would not fit. No horizontal flips: they swap the left- and right-arm
+classes.
+
 mlGeNN's LIF neuron integrates `dv/dt = (-v + Isyn) / tau_mem`, so an input spike
 moves `v` by about `weight * tau_syn / tau_mem`. A longer `tau_mem` with the same
 weights starts almost silent: with `tau_mem_ms` 50 and sd 0.375 (run

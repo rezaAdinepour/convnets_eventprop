@@ -217,3 +217,49 @@ def _load_cache(cache_file):
 def max_spikes_per_neuron(spikes):
     """Largest number of spikes any single input neuron emits in one recording."""
     return max(int(np.diff(s.end_spikes, prepend=0).max()) for s in spikes)
+
+
+def augment_spikes(spikes, rng, shift_px=0.0, zoom=(1.0, 1.0), rotate_deg=0.0):
+    """Randomly shift, zoom and rotate each recording on the input grid.
+
+    One draw per recording: shift uniform in +-shift_px pixels per axis, zoom
+    factor uniform in zoom, rotation uniform in +-rotate_deg degrees about the
+    centre. Each input neuron copies the spike train of the nearest source pixel
+    (same polarity), so no neuron fires more often than before; the border stays
+    silent. Pixels pulled from outside the sensor are silent.
+    """
+    width, height, channels = INPUT_SHAPE
+    inner = SENSOR_SIZE // SPATIAL_FACTOR
+    centre = (inner - 1) / 2
+    grid_y, grid_x = np.meshgrid(np.arange(inner), np.arange(inner), indexing="ij")
+    dest_pixel = ((grid_y + BORDER) * width + grid_x + BORDER).ravel()
+    u_base, v_base = (grid_x - centre).ravel(), (grid_y - centre).ravel()
+    augmented = []
+    for s in spikes:
+        dx, dy = rng.uniform(-shift_px, shift_px, 2)
+        factor = rng.uniform(*zoom)
+        angle = np.deg2rad(rng.uniform(-rotate_deg, rotate_deg))
+        u, v = u_base - dx, v_base - dy
+        src_x = np.rint((np.cos(angle) * u + np.sin(angle) * v) / factor + centre).astype(int)
+        src_y = np.rint((-np.sin(angle) * u + np.cos(angle) * v) / factor + centre).astype(int)
+        valid = (src_x >= 0) & (src_x < inner) & (src_y >= 0) & (src_y < inner)
+        src_pixel = (src_y[valid] + BORDER) * width + src_x[valid] + BORDER
+
+        source = np.full(width * height * channels, -1)
+        for c in range(channels):
+            source[dest_pixel[valid] * channels + c] = src_pixel * channels + c
+        counts = np.diff(s.end_spikes, prepend=0)
+        starts = s.end_spikes - counts
+        has_source = source >= 0
+        source = np.where(has_source, source, 0)
+        new_counts = np.where(has_source, counts[source], 0)
+        new_end = np.cumsum(new_counts)
+        index = (np.arange(new_end[-1]) - np.repeat(new_end - new_counts, new_counts)
+                 + np.repeat(starts[source], new_counts))
+        augmented.append(PreprocessedSpikes(new_end, s.spike_times[index]))
+    return augmented
+
+
+def augmentation_growth(zoom, rotate_deg):
+    """Bound on how many input pixels can copy one source pixel."""
+    return 1 if zoom[1] <= 1.0 and rotate_deg == 0.0 else 4
