@@ -364,3 +364,36 @@ Grad limit and regulariser strength are scaled with the window length from the 2
 * In all four, every layer reaches the same activity by epoch 50 (conv1 46, conv2 60-62,
   conv3 76-87, hidden 98 spikes per neuron per gesture), and the adjoint limits stay at 5e-6 to 1e-5.
 * `pool` stays the default.
+
+### Stage H sweep: one parameter at a time (`configs/sweep_stage_h.json`, base `configs/base.json` = run `20261121_121123`, seed 1, 100 epochs)
+
+| Run | Change | Best (epoch) | Epochs 60-79 | Last 20 | Train, last 20 | Train loss, epoch 99 |
+|---|---|---|---|---|---|---|
+| `20261121_121123` | base | 117 (48) | 112.5 | 113.2 | 88.6% | 0.448 |
+| `20261121_194843_lr_6e-3` | lr 6e-3 | 120 (77) | 115.7 | 117.2 | 92.2% | 0.347 |
+| `20261121_212041_lr_1e-2` | lr 1e-2 | 120 (41) | 114.5 | 115.6 | 93.2% | 0.303 |
+| `20261121_225637_reg_1e-9` | regulariser 1e-9 | 116 (48) | 113.7 | 113.7 | 91.6% | 0.330 |
+| `20261122_002328_reg_2.5e-8` | regulariser 2.5e-8 | 113 (37) | 111.1 | 111.5 | 84.6% | 0.632 |
+| `20261122_015031_grad_100` | grad limit 100 | 118 (48) | 112.0 | 113.8 | 88.8% | 0.454 |
+| `20261122_031819_grad_1000` | grad limit 1000 | 116 (48) | 111.5 | 112.0 | 88.8% | 0.445 |
+| `20261122_044528_tau_mem_50` | tau_mem 50 ms, weight sd 0.9375 | 120 (85) | 115.2 | 117.8 | 88.4% | 0.489 |
+| `20261122_060349_tau_mem_100` | tau_mem 100 ms, weight sd 1.875 | 113 (38) | 109.5 | 108.5 | 86.9% | 0.508 |
+| `20261122_071736_evd_beta_2.4` | EvDownsampling beta 2.4 | 117 (47) | 113.2 | 112.2 | 88.8% | 0.442 |
+| `20261122_085253_evd_beta_0.6` | EvDownsampling beta 0.6 | 116 (47) | 112.0 | 112.2 | 88.3% | 0.451 |
+
+* No single change moves the last-20 mean by clearly more than the seed spread (about 4/143).
+  The two largest gains are tau_mem 50 ms (+4.6) and lr 6e-3 (+4.0); both are still
+  rising at epoch 99 (epochs 60-79 vs 80-99: 115.2 -> 117.8 and 115.7 -> 117.2).
+* A larger learning rate lifts training accuracy past the 88% plateau (92-93%), so the
+  plateau was partly an optimisation limit. lr 1e-2 peaks early and then stays flat.
+* The regulariser trades fit for nothing: 1e-9 fits better (91.6% train) at equal validation,
+  2.5e-8 costs 4 points of training accuracy and 1.7 of validation.
+* The grad limit does not bind. With 100, 200 and 1000 the adjoint limits scale by 10x,
+  but accuracy, activity and the zero fractions of lambda_V (conv1 0.64, conv2 0.54, conv3 0.33,
+  hidden 0.10 at epoch 99) are the same. The zero lambda_V therefore do not come from the clamp.
+* tau_mem 100 ms is worse (-4.7); with tau_mem 50 and 100 ms the convolutional layers fire less
+  (conv3 80 and 74 against 85 spikes per neuron) and an epoch is 10-15% faster.
+* EvDownsampling beta hardly changes the input. Theta grows by beta * |V| * (1 - exp(-dt/tau_theta)),
+  0.24% of beta * |V| per spike, so it only limits pixels that fire in most bins. beta 2.4 lowers
+  the busiest input neuron from 1592 to 1118 spikes per gesture, beta 0.6 leaves it at 1592, and the
+  training cache changes by less than 1% in size. Network activity and accuracy match the base run.
