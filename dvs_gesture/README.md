@@ -464,3 +464,29 @@ Per subject, summed over the 3 seeds: 24 70.7%, 25 56.1%, 26 82.4%, 27 76.5%, 28
   direction of a movement is learned. The errors concentrate on the two-handed, centred
   gestures (hand clapping, arm roll, air drums, air guitar), which differ mainly in rhythm,
   and on left hand wave vs left arm cw (same arm, same region).
+
+### Stage A: training data augmentation (`configs/aug_stage_a.json`, lr 6e-3, tau_mem 50 ms, seed 1)
+
+Validation recordings are not augmented. Training accuracy is measured on the augmented
+recordings of each epoch. The augmentation keeps 97-99% of the input spikes.
+
+| Run | Augmentation | Epochs | Best (epoch) | Previous 20 | Last 20 | Train, last 20 | Train loss, last epoch |
+|---|---|---|---|---|---|---|---|
+| `20261122_112809_combo_seed1` | none | 100 | 122 (61) | 117.5 | 117.2 (82.0%) | 91.0% | 0.388 |
+| `20261122_234009_shift_4` | shift +-4 px | 100 | 130 (75) | 127.8 | 127.3 (89.0%) | 76.6% | 0.746 |
+| `20261123_010633_full` | shift +-4 px, zoom 0.8-1.2, rotation +-10 deg | 100 | 131 (74) | 128.6 | 129.7 (90.7%) | 73.0% | 0.826 |
+| `20261123_023530_full_200` | shift +-4 px, zoom 0.8-1.2, rotation +-10 deg | 200 | 136 (100) | 134.2 | 133.7 (93.5%) | 79.5% | 0.655 |
+
+Mean validation in 20-epoch windows of `full_200`: 79.2, 116.2, 124.1, 127.2, 130.3, 133.4,
+134.0, 134.0, 134.2, 133.7.
+
+* Augmentation is by far the largest gain so far: +10.1 (shift only), +12.5 (full) and +16.5
+  (full, 200 epochs) on the last-20 mean, against a seed sd of 2.1 without augmentation.
+* The overfitting is gone: training accuracy on augmented data is now below validation
+  accuracy, where it was 9 points above. The network is no longer limited by memorising the
+  934 training recordings, so it benefits from longer training: `full_200` plateaus at about
+  134/143 from epoch 100 on.
+* Zoom and rotation add 2.4 points over the shift alone at 100 epochs (single seed, within
+  about one seed sd).
+* Activity at the last epoch is unchanged (conv1 49-51, conv2 59-64, conv3 84-87, hidden 97-98
+  spikes per neuron per gesture).
