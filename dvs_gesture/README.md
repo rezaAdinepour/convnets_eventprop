@@ -146,9 +146,12 @@ classes.
 
 `output_lr_factor` (default 1) scales the Adam learning rate of the output weights only;
 the schedule keeps the ratio. `channels` (default `[16, 16, 8]`) sets the filters of conv1-3.
-GPU memory is dominated by the EventProp spike ring of every population,
-batch x neurons x `MAX_SPIKES` x 4 bytes: 8.1 GB at the default width, 11.3 GB at
-`[24, 24, 16]`; `[32, 32, 16]` (14.2 GB) is unlikely to fit a 16 GB GPU (estimate, not tested).
+Memory grows with the number of neurons: EventProp keeps a spike-time ring of
+batch x neurons x `MAX_SPIKES` x 4 bytes per population (8.1 GB at the default width), and
+PyGeNN holds it in host memory as well as on the GPU. With `[24, 24, 16]` (11.3 GB) training
+was killed (SIGKILL, no Python error) while the model was loaded, after the build, with
+about 37 of 61 GB of host memory free (smoke run `20261123_180348_smoke_wide`).
+`[16, 16, 16]` widens only conv3, the 7x7x8 bottleneck into the hidden layer (+4% neurons).
 
 mlGeNN's LIF neuron integrates `dv/dt = (-v + Isyn) / tau_mem`, so an input spike
 moves `v` by about `weight * tau_syn / tau_mem`. A longer `tau_mem` with the same
