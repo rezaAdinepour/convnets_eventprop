@@ -152,6 +152,8 @@ PyGeNN holds it in host memory as well as on the GPU. With `[24, 24, 16]` (11.3 
 was killed (SIGKILL, no Python error) while the model was loaded, after the build, with
 about 37 of 61 GB of host memory free (smoke run `20261123_180348_smoke_wide`).
 `[16, 16, 16]` widens only conv3, the 7x7x8 bottleneck into the hidden layer (+4% neurons).
+The stage B sweep runs both `[16, 16, 16]` and, again with the desktop applications closed
+(54 GB free), `[24, 24, 16]`.
 
 mlGeNN's LIF neuron integrates `dv/dt = (-v + Isyn) / tau_mem`, so an input spike
 moves `v` by about `weight * tau_syn / tau_mem`. A longer `tau_mem` with the same
