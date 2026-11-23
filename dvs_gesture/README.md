@@ -490,3 +490,45 @@ Mean validation in 20-epoch windows of `full_200`: 79.2, 116.2, 124.1, 127.2, 13
   about one seed sd).
 * Activity at the last epoch is unchanged (conv1 49-51, conv2 59-64, conv3 84-87, hidden 97-98
   spikes per neuron per gesture).
+
+## Stage 6b: final models with augmentation and test set (`configs/stage6b_train_all_aug.json`)
+
+Same as stage 6 plus the `full_200` augmentation (shift +-4 px, zoom 0.8-1.2, rotation +-10 deg)
+and 200 epochs. The test set was evaluated once per run, at epoch 199, fixed before training.
+This is the second evaluation of the test set: every choice behind both final models (stage H,
+stage A) was made on validation only, and the stage 6 test results were not used for any decision.
+
+| Seed | Run | Train (augmented), last 20 | Test |
+|---|---|---|---|
+| 1 | `20261123_075836_final_aug_seed1` | 81.0% | 224/264 (84.8%) |
+| 2 | `20261123_110557_final_aug_seed2` | 80.9% | 224/264 (84.8%) |
+| 3 | `20261123_141007_final_aug_seed3` | 80.3% | 219/264 (83.0%) |
+| Mean (sd) | | 80.7% | 222.3 (2.9), **84.2% (1.1)** |
+
+Per class, summed over the 3 seeds (out of 72), with stage 6 for comparison:
+
+| Class | Correct | Stage 6 | Main confusion |
+|---|---|---|---|
+| Left arm ccw | 72 (100%) | 69 | |
+| Right arm cw | 70 (97%) | 66 | |
+| Right hand wave | 69 (96%) | 64 | |
+| Left hand wave | 69 (96%) | 53 | left arm cw 3 |
+| Right arm ccw | 67 (93%) | 63 | right hand wave 5 |
+| Other gestures | 67 (93%) | 65 | |
+| Arm roll | 66 (92%) | 50 | hand clapping 3 |
+| Left arm cw | 64 (89%) | 63 | left hand wave 5, other 3 |
+| Hand clapping | 42 (58%) | 44 | arm roll 13, air drums 10, air guitar 4 |
+| Air drums | 41 (57%) | 36 | arm roll 13, other 9, hand clapping 6 |
+| Air guitar | 40 (56%) | 42 | other 18, air drums 5, hand clapping 4 |
+
+Per subject, summed over the 3 seeds: 24 81.8%, 25 63.6%, 26 75.2%, 27 88.6%, 28 89.1%, 29 94.5%.
+
+* Augmentation raises test accuracy by 6.5 points (77.7% to 84.2%); every seed gains
+  (+23, +18, +11 recordings over the stage 6 seed with the same number).
+* The gain comes from left hand wave (+16), arm roll (+16) and the arm rotations. Hand
+  clapping, air drums and air guitar stay at 56-58%: they are confused with each other, with arm
+  roll and with "other". These gestures share the same central region and differ mainly in
+  rhythm, which spatial augmentation cannot help with.
+* Test accuracy is 9 points below the single-seed validation of `full_200` (93.5%); in stage 6
+  the gap was 5 points. Validation has 143 recordings from 3 subjects, and subject 25 remains the
+  hardest test subject (64%).
