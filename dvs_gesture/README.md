@@ -144,6 +144,12 @@ one source, so the input buffer is then 4x larger, and training stops if an epoc
 augmented input would not fit. No horizontal flips: they swap the left- and right-arm
 classes.
 
+`output_lr_factor` (default 1) scales the Adam learning rate of the output weights only;
+the schedule keeps the ratio. `channels` (default `[16, 16, 8]`) sets the filters of conv1-3.
+GPU memory is dominated by the EventProp spike ring of every population,
+batch x neurons x `MAX_SPIKES` x 4 bytes: 8.1 GB at the default width, 11.3 GB at
+`[24, 24, 16]`; `[32, 32, 16]` (14.2 GB) is unlikely to fit a 16 GB GPU (estimate, not tested).
+
 mlGeNN's LIF neuron integrates `dv/dt = (-v + Isyn) / tau_mem`, so an input spike
 moves `v` by about `weight * tau_syn / tau_mem`. A longer `tau_mem` with the same
 weights starts almost silent: with `tau_mem_ms` 50 and sd 0.375 (run

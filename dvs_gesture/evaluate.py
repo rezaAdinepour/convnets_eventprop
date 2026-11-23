@@ -11,7 +11,7 @@ from tonic.datasets import DVSGesture
 
 from data import (EVDOWNSAMPLING_PARAMS, NUM_CLASSES, encode_recordings, load_dataset,
                   split_train_validation)
-from model import (BATCH_SIZE, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
+from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
                    compile_for_inference, delay_connections)
 
 
@@ -61,7 +61,8 @@ def main():
                             downsample=config.get("downsample", "pool"),
                             hidden=config.get("hidden", True),
                             tau_mem_ms=config.get("tau_mem_ms", TAU_MEM_MS),
-                            tau_syn_ms=config.get("tau_syn_ms", TAU_SYN_MS))
+                            tau_syn_ms=config.get("tau_syn_ms", TAU_SYN_MS),
+                            channels=config.get("channels", CHANNELS))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
         # Training rounds the learned delays the same way (EventPropCompiler)

@@ -14,9 +14,9 @@ from ml_genn.utils.data import calc_max_spikes
 from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, augment_spikes,
                   augmentation_growth, encode_recordings, load_dataset, max_spikes_per_neuron,
                   split_train_validation)
-from model import (BATCH_SIZE, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS, LAYER_NAMES,
-                   DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES, REG_STRENGTH,
-                   REG_TARGET, SEED, SPIKING_WEIGHT_SD, TAU_MEM_MS, TAU_SYN_MS,
+from model import (BATCH_SIZE, CHANNELS, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS,
+                   LAYER_NAMES, DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES,
+                   REG_STRENGTH, REG_TARGET, SEED, SPIKING_WEIGHT_SD, TAU_MEM_MS, TAU_SYN_MS,
                    build_network, compile_for_training, delay_connections)
 
 LR_SCHEDULES = ("constant", "cosine")
@@ -242,6 +242,10 @@ def main():
                         help="Adam learning rate for delays (in timesteps)")
     parser.add_argument("--lr", type=float, default=LEARNING_RATE,
                         help="Initial (after warm-up: peak) Adam learning rate for weights")
+    parser.add_argument("--output-lr-factor", type=float, default=1.0,
+                        help="Scale the weight learning rate of the output layer by this")
+    parser.add_argument("--channels", type=int, nargs=3, default=CHANNELS,
+                        metavar=("CONV1", "CONV2", "CONV3"), help="Filters of the conv layers")
     parser.add_argument("--lr-schedule", choices=LR_SCHEDULES, default="constant",
                         help="cosine decays every learning rate towards 0 at --epochs")
     parser.add_argument("--warmup-epochs", type=int, default=0,
@@ -291,6 +295,9 @@ def main():
             or not 0 < args.aug_zoom[0] <= args.aug_zoom[1]):
         parser.error("--aug-shift-px and --aug-rotate-deg must be >= 0, "
                      "--aug-zoom needs 0 < low <= high")
+    args.channels = tuple(args.channels)
+    if args.output_lr_factor <= 0 or min(args.channels) < 1:
+        parser.error("--output-lr-factor must be > 0 and --channels >= 1")
     augment = args.aug_shift_px > 0 or args.aug_rotate_deg > 0 or args.aug_zoom != (1.0, 1.0)
 
     np.random.seed(args.seed)
@@ -342,7 +349,8 @@ def main():
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
         lambda_epochs=args.lambda_epochs, delay_layers=args.delay_layers,
         max_delay_ms=args.max_delay_ms, init_delay_ms=args.init_delay_ms,
-        delay_lr=args.delay_lr, lr=args.lr, lr_schedule=args.lr_schedule,
+        delay_lr=args.delay_lr, lr=args.lr, output_lr_factor=args.output_lr_factor,
+        channels=args.channels, lr_schedule=args.lr_schedule,
         warmup_epochs=args.warmup_epochs, downsample=args.downsample,
         hidden=not args.no_hidden, tau_mem_ms=args.tau_mem_ms, tau_syn_ms=args.tau_syn_ms,
         spiking_weight_sd=args.spiking_weight_sd, evd_params=evd_params,
@@ -353,13 +361,14 @@ def main():
 
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
                             args.init_delay_ms, args.downsample, not args.no_hidden,
-                            args.tau_mem_ms, args.tau_syn_ms, args.spiking_weight_sd)
+                            args.tau_mem_ms, args.tau_syn_ms, args.spiking_weight_sd,
+                            args.channels)
     print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,
                                     args.reg_strength, args.reg_target, args.seed,
-                                    args.delay_lr, args.lr)
+                                    args.delay_lr, args.lr, args.output_lr_factor)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds", "lr"])

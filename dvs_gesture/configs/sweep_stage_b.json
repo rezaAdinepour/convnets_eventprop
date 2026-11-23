@@ -1,0 +1,16 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "runs": {
+    "out_lr_0.4": {"output_lr_factor": 0.4},
+    "crop_6000": {"crop_ms": 6000, "grad_limit": 300, "reg_strength": [3e-9, 3e-9]},
+    "wide_24": {"channels": [24, 24, 16]},
+    "evd_tau_theta_105": {"evd_tau_theta_ms": 105.0},
+    "evd_tau_acc_8": {"evd_tau_accumulator_ms": 8.0}
+  }
+}
