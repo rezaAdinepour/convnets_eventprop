@@ -596,3 +596,30 @@ busiest input neuron fires 2762 times.
   and negative ON weight sums (8 at initialisation, 13 in `full`); mean w OFF +0.38 and
   ON -0.07 against +0.71 and -0.21 in `full`. The pattern is thus tied to the
   EvDownsampling input, but it does not change accuracy.
+
+### Neuron model of Arfa et al. (`configs/neuron_match.json`, seed 1, 100 epochs)
+
+Same setup as `20261123_010633_full` (tau_mem 50 ms, exponential synapses 5 ms, reset to 0),
+changing the spiking layers towards the snnTorch LIF of Arfa et al. (beta 0.93 per 1 ms, so
+tau_mem about 14 ms, delta synapses, subtract reset). The weight sd of each variant was picked
+from 2-epoch smoke runs whose epoch-0 activity was closest to `full`'s (conv1 15, conv2 16,
+conv3 55, hidden 128 spikes per neuron per gesture): `tau_14_sd_0.26` let the hidden layer
+fall to 21 at epoch 1, and delta synapses with sd 2 or 4 overflowed the hidden ring buffer in
+the first batch.
+
+| Run | Change | Best (epoch) | Previous 20 | Last 20 | Train, last 20 | Train loss, last epoch | s/epoch |
+|---|---|---|---|---|---|---|---|
+| `20261123_010633_full` | none | 131 (74) | 128.6 | 129.7 (90.7%) | 73.0% | 0.826 | 54 |
+| `20261124_164656_subtract_reset` | subtract reset | 128 (49) | 126.8 | 127.0 (88.8%) | 74.6% | 0.811 | 54 |
+| `20261124_181245_tau_14_sd_0.36` | tau_mem 14 ms, sd 0.36 | 134 (43) | 130.7 | 131.2 (91.7%) | 75.5% | 0.795 | 64 |
+| `20261124_195556_delta_14_sd_1` | tau_mem 14 ms, delta synapses, subtract reset, sd 1 | 91 (63) | 79.8 | 86.1 (60.2%, epochs 60-71) | 53.4% | 1.347 | 53 |
+
+* `tau_14_sd_0.36` has the best last-20 mean of all runs so far (+1.5 against `full`, below one
+  seed sd of 2.1) and the best single epoch (134, 93.7%). Subtract reset alone is 2.7 lower.
+* Delta synapses learn far worse with EventProp here and the run crashed at epoch 72 (hidden
+  ring buffer violation: a neuron fired more than the 6242-entry ring holds over consecutive
+  trials). At its last epoch conv1 was almost silent (mean 4 spikes, 10.6% silent neurons)
+  while conv2 and conv3 had neurons near 3000 spikes. Its adjoint limits are about ten times
+  smaller than `full`'s (as are `tau_14`'s, which learned normally).
+* So the neuron model does not explain the gap to Arfa et al. either; only the shorter
+  tau_mem is worth keeping.
