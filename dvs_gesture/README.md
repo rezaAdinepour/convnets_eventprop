@@ -572,3 +572,25 @@ rotation +-10 deg, lr 6e-3, tau_mem 50 ms). Validation is out of 143.
   664 bytes out of 505 MB.
 * Activity and adjoint limits at epoch 99 are the same in all runs: conv1 50, conv2 59-62,
   conv3 83-84 and hidden 96-97 spikes per neuron per gesture; limits 1e-5 to 3e-5.
+
+### Input control: occupancy frames instead of EvDownsampling (`configs/input_control.json`, seed 1, 100 epochs)
+
+Same setup as `20261123_010633_full`, but the input is the plain 32x32 1 ms occupancy
+encoding (one spike per pixel, polarity and 1 ms bin with at least one event), without
+EvDownsampling. It feeds 1.48x as many input spikes (buffer 63.7 M against 43.1 M); the
+busiest input neuron fires 2762 times.
+
+| Run | Input | Best (epoch) | Previous 20 | Last 20 | Train, last 20 | Train loss, last epoch | s/epoch |
+|---|---|---|---|---|---|---|---|
+| `20261123_010633_full` | EvDownsampling | 131 (74) | 128.6 | 129.7 (90.7%) | 73.0% | 0.826 | 55 |
+| `20261124_145544_occupancy_4000` | occupancy | 132 (61) | 130.5 | 130.4 (91.2%) | 72.6% | 0.856 | 54 |
+
+* The two inputs reach the same validation accuracy (+0.7, below one seed sd), so
+  EvDownsampling is not what keeps us below the ~94% of Arfa et al.; the gap must come from
+  the input timing (their count frames), the neuron model or the training.
+* Activity and adjoint limits at epoch 99 match `full` (validation: conv1 42, conv2 53,
+  conv3 76, hidden 92 spikes per neuron per gesture; limits 1.7e-5 to 2.8e-5).
+* The conv1 sign pattern is weaker with occupancy input: 9 of 16 filters have positive OFF
+  and negative ON weight sums (8 at initialisation, 13 in `full`); mean w OFF +0.38 and
+  ON -0.07 against +0.71 and -0.21 in `full`. The pattern is thus tied to the
+  EvDownsampling input, but it does not change accuracy.
