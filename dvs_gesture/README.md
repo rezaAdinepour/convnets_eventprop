@@ -19,6 +19,7 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 | `evaluate.py` | Reload the best epoch and evaluate validation (or, once, the test set) |
 | `plot_training.py` | Plot validation accuracy and training loss of one or more runs |
 | `compare_conv1_filters.py` | Plot a run's conv1 filters next to those of the Arfa et al. snnTorch checkpoint (read without PyTorch), matched one-to-one by cosine similarity |
+| `polarity_balance.py` | ON vs OFF counts of the raw events and of the EvDownsampling input (from the training cache), per split and class |
 | `activity_profile.py` | Events per 500 ms bin of every training/validation recording: leading and trailing silences that trimming would remove |
 | `run.sh` | Run `train.py` in a new, timestamped experiment directory |
 
