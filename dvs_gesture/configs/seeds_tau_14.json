@@ -1,0 +1,17 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "runs": {
+    "full_seed2": {"seed": 2},
+    "full_seed3": {"seed": 3},
+    "tau_14_seed2": {"tau_mem_ms": 14.0, "spiking_weight_sd": 0.36, "seed": 2},
+    "tau_14_seed3": {"tau_mem_ms": 14.0, "spiking_weight_sd": 0.36, "seed": 3},
+    "tau_14_crop_6000": {"tau_mem_ms": 14.0, "spiking_weight_sd": 0.36, "crop_ms": 6000,
+                         "grad_limit": 300, "reg_strength": [3e-9, 3e-9]}
+  }
+}
