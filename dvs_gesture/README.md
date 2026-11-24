@@ -542,3 +542,31 @@ Per subject, summed over the 3 seeds: 24 81.8%, 25 63.6%, 26 75.2%, 27 88.6%, 28
 * Test accuracy is 9 points below the single-seed validation of `full_200` (93.5%); in stage 6
   the gap was 5 points. Validation has 143 recordings from 3 subjects, and subject 25 remains the
   hardest test subject (64%).
+
+### Stage B: remaining single changes on top of the augmentation (`configs/sweep_stage_b.json`, seed 1, 100 epochs)
+
+Each run changes one setting of `20261123_010633_full` (stage A: shift +-4 px, zoom 0.8-1.2,
+rotation +-10 deg, lr 6e-3, tau_mem 50 ms). Validation is out of 143.
+
+| Run | Change | Best (epoch) | Previous 20 | Last 20 | Train, last 20 | Train loss, last epoch | s/epoch |
+|---|---|---|---|---|---|---|---|
+| `20261123_010633_full` | none | 131 (74) | 128.6 | 129.7 (90.7%) | 73.0% | 0.826 | 55 |
+| `20261123_181447_out_lr_0.4` | output lr x0.4 | 132 (59) | 127.8 | 128.9 (90.1%) | 71.0% | 0.901 | 54 |
+| `20261123_194211_crop_6000` | first 6 s, grad limit 300, regulariser 3e-9 | 132 (76) | 130.4 | 131.0 (91.6%) | 72.2% | 0.895 | 59 |
+| `20261123_211721_conv3_16` | channels 16/16/16 | 132 (68) | 130.4 | 129.8 (90.8%) | 79.1% | 0.676 | 56 |
+| `20261123_224644_evd_tau_theta_105` | EvDownsampling tau_theta 105 ms | 132 (77) | 129.6 | 130.6 (91.3%) | 73.0% | 0.822 | 51 |
+| `20261124_002101_evd_tau_acc_8` | EvDownsampling tau_accumulator 8 ms | 132 (59) | 129.3 | 128.8 (90.0%) | 73.4% | 0.816 | 51 |
+
+* No change moves the last-20 mean by more than 1.3 (-0.9 to +1.3), below the seed sd of 2.1
+  measured without augmentation. The configuration of stage 6b stays the final one.
+* `crop_6000` is ahead in both of the last two 20-epoch windows (130.4 and 131.0 against
+  128.6 and 129.7), but by less than one seed sd. Its busiest input neuron fires 2313 times.
+* `conv3_16` fits the augmented training data better (train 79.1%, loss 0.68) without a
+  validation gain. `[24, 24, 16]` does not fit in memory (see Running).
+* tau_accumulator is almost inert in this encoding: EvDownsampling's neuron multiplies V by
+  `1 - exp(-dt / tau_acc)` every 1 ms step (`event_downsampling_genn.py`, `sim_code`), so V keeps
+  6% of its value per step at 16 ms and 12% at 8 ms. The accumulator thus integrates over about
+  one step, and tau_acc mainly scales V. The 8 ms training cache differs from the 16 ms one by
+  664 bytes out of 505 MB.
+* Activity and adjoint limits at epoch 99 are the same in all runs: conv1 50, conv2 59-62,
+  conv3 83-84 and hidden 96-97 spikes per neuron per gesture; limits 1e-5 to 3e-5.
