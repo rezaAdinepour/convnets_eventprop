@@ -1,0 +1,20 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "runs": {
+    "subtract_reset": {"subtract_reset": true},
+    "tau_14_sd_0.26": {"tau_mem_ms": 14.0, "spiking_weight_sd": 0.2625},
+    "tau_14_sd_0.36": {"tau_mem_ms": 14.0, "spiking_weight_sd": 0.36},
+    "delta_14_sd_1": {"tau_mem_ms": 14.0, "synapse": "delta", "subtract_reset": true,
+                      "spiking_weight_sd": 1.0},
+    "delta_14_sd_2": {"tau_mem_ms": 14.0, "synapse": "delta", "subtract_reset": true,
+                      "spiking_weight_sd": 2.0},
+    "delta_14_sd_4": {"tau_mem_ms": 14.0, "synapse": "delta", "subtract_reset": true,
+                      "spiking_weight_sd": 4.0}
+  }
+}

@@ -6,7 +6,7 @@ from ml_genn.losses import SparseCategoricalCrossentropy
 from ml_genn.neurons import LeakyIntegrate, LeakyIntegrateFire, SpikeInput
 from ml_genn.optimisers import Adam
 from ml_genn.regularisers import SpikeCount
-from ml_genn.synapses import Exponential
+from ml_genn.synapses import Delta, Exponential
 
 from data import BIN_MS, INPUT_SHAPE, NUM_CLASSES
 
@@ -36,6 +36,7 @@ INIT_DELAY_MS = 50.0
 DELAY_LEARNING_RATE = 0.1
 
 DOWNSAMPLING = ("pool", "stride", "conv3-stride")
+SYNAPSES = ("exponential", "delta")
 
 CHANNELS = (16, 16, 8)
 
@@ -43,7 +44,8 @@ CHANNELS = (16, 16, 8)
 def build_network(max_input_spikes_per_batch, delay_layers=(),
                   max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS,
                   downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS,
-                  spiking_weight_sd=SPIKING_WEIGHT_SD, channels=CHANNELS):
+                  spiking_weight_sd=SPIKING_WEIGHT_SD, channels=CHANNELS,
+                  synapse="exponential", subtract_reset=False):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
 
     ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
@@ -51,6 +53,11 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     about weight * tau_syn / tau_mem, so a longer tau_mem needs a proportionally
     larger ``spiking_weight_sd`` (initial weight sd of the spiking layers) to
     start with the same activity. ``channels`` are the filters of conv1, conv2 and conv3.
+
+    ``synapse="delta"`` makes the synapses into the spiking layers delta synapses
+    (the input is injected for one step, so a spike moves v by
+    weight * (1 - exp(-dt / tau_mem))); the output keeps the exponential synapse.
+    ``subtract_reset`` subtracts the threshold after a spike instead of resetting v to 0.
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
@@ -61,10 +68,11 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     layer. ``hidden=False`` drops the hidden layer (conv3 -> output).
     """
     def lif():
-        return LeakyIntegrateFire(v_thresh=1.0, tau_mem=tau_mem_ms)
+        return LeakyIntegrateFire(v_thresh=1.0, tau_mem=tau_mem_ms,
+                                  relative_reset=subtract_reset)
 
-    def synapse():
-        return Exponential(tau_syn_ms)
+    def spiking_synapse():
+        return Delta() if synapse == "delta" else Exponential(tau_syn_ms)
 
     def delay(name):
         # A constant delay would make mlGeNN skip the delayed adjoint lookup,
@@ -84,17 +92,17 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     with network:
         InputLayer(SpikeInput(max_spikes=max_input_spikes_per_batch), INPUT_SHAPE, name="input")
         Layer(Conv2D(spiking_weights, c1, 5, conv_strides=2, **delay("conv1")),
-              lif(), synapse=synapse(), record_spikes=True, name="conv1",
+              lif(), synapse=spiking_synapse(), record_spikes=True, name="conv1",
               **layer_delay("conv1"))
         Layer(Conv2D(spiking_weights, c2, 3, conv_padding="same", **delay("conv2")),
-              lif(), synapse=synapse(), record_spikes=True, name="conv2",
+              lif(), synapse=spiking_synapse(), record_spikes=True, name="conv2",
               **layer_delay("conv2"))
         if downsample == "pool":
             conv3 = AvgPoolConv2D(spiking_weights, c3, 2, 3, conv_padding="same", sum=True,
                                   **delay("conv3"))
         else:
             conv3 = Conv2D(spiking_weights, c3, 3, conv_strides=2, **delay("conv3"))
-        Layer(conv3, lif(), synapse=synapse(), record_spikes=True, name="conv3",
+        Layer(conv3, lif(), synapse=spiking_synapse(), record_spikes=True, name="conv3",
               **layer_delay("conv3"))
         if hidden:
             if downsample != "stride":
@@ -102,11 +110,12 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
                                              flatten=True, **delay("hidden"))
             else:
                 connectivity = Dense(spiking_weights, **delay("hidden"))
-            Layer(connectivity, lif(), 256, synapse=synapse(), record_spikes=True,
+            Layer(connectivity, lif(), 256, synapse=spiking_synapse(), record_spikes=True,
                   name="hidden", **layer_delay("hidden"))
         Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD), **delay("output")),
               LeakyIntegrate(tau_mem=TAU_MEM_MS, readout="avg_var_exp_weight"),
-              NUM_CLASSES, synapse=synapse(), name="output", **layer_delay("output"))
+              NUM_CLASSES, synapse=Exponential(tau_syn_ms), name="output",
+              **layer_delay("output"))
     return network
 
 

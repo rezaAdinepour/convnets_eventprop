@@ -16,8 +16,8 @@ from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, augment_spi
                   split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS,
                    LAYER_NAMES, DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES,
-                   REG_STRENGTH, REG_TARGET, SEED, SPIKING_WEIGHT_SD, TAU_MEM_MS, TAU_SYN_MS,
-                   build_network, compile_for_training, delay_connections)
+                   REG_STRENGTH, REG_TARGET, SEED, SPIKING_WEIGHT_SD, SYNAPSES, TAU_MEM_MS,
+                   TAU_SYN_MS, build_network, compile_for_training, delay_connections)
 
 LR_SCHEDULES = ("constant", "cosine")
 
@@ -259,6 +259,10 @@ def main():
                         help="Membrane time constant of the spiking layers")
     parser.add_argument("--tau-syn-ms", type=float, default=TAU_SYN_MS,
                         help="Synaptic time constant")
+    parser.add_argument("--synapse", choices=SYNAPSES, default="exponential",
+                        help="Synapse model of the spiking layers")
+    parser.add_argument("--subtract-reset", action="store_true",
+                        help="Subtract the threshold after a spike instead of resetting v to 0")
     parser.add_argument("--spiking-weight-sd", type=float, default=SPIKING_WEIGHT_SD,
                         help="Initial weight sd of the spiking layers (scale with tau_mem)")
     parser.add_argument("--evd-tau-theta-ms", type=float, default=TAU_THETA_MS,
@@ -353,6 +357,7 @@ def main():
         channels=args.channels, lr_schedule=args.lr_schedule,
         warmup_epochs=args.warmup_epochs, downsample=args.downsample,
         hidden=not args.no_hidden, tau_mem_ms=args.tau_mem_ms, tau_syn_ms=args.tau_syn_ms,
+        synapse=args.synapse, subtract_reset=args.subtract_reset,
         spiking_weight_sd=args.spiking_weight_sd, evd_params=evd_params,
         aug_shift_px=args.aug_shift_px, aug_zoom=args.aug_zoom,
         aug_rotate_deg=args.aug_rotate_deg,
@@ -362,7 +367,7 @@ def main():
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
                             args.init_delay_ms, args.downsample, not args.no_hidden,
                             args.tau_mem_ms, args.tau_syn_ms, args.spiking_weight_sd,
-                            args.channels)
+                            args.channels, args.synapse, args.subtract_reset)
     print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
