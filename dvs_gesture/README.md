@@ -623,3 +623,21 @@ the first batch.
   smaller than `full`'s (as are `tau_14`'s, which learned normally).
 * So the neuron model does not explain the gap to Arfa et al. either; only the shorter
   tau_mem is worth keeping.
+
+### Seed repeats: `full` against tau_mem 14 ms (`configs/seeds_tau_14.json`, 100 epochs)
+
+Seeds change the initial weights, the augmentation draws and GeNN's RNG; the validation
+subjects are fixed. Seed 1 is `20261123_010633_full` and `20261124_181245_tau_14_sd_0.36`.
+
+| Seed | `full`: best (epoch) | `full`: last 20 | `tau_14`: best (epoch) | `tau_14`: last 20 | Difference |
+|---|---|---|---|---|---|
+| 1 | 131 (74) | 129.7 | 134 (43) | 131.2 | +1.5 |
+| 2 (`20261124_212456_full_seed2`, `20261125_001837_tau_14_seed2`) | 131 (74) | 127.5 | 132 (80) | 128.0 | +0.5 |
+| 3 (`20261124_225206_full_seed3`, `20261125_020121_tau_14_seed3`) | 128 (41) | 127.4 | 131 (50) | 125.4 | -2.0 |
+| Mean +- sd | | 128.2 +- 1.3 (89.7%) | | 128.2 +- 2.9 (89.7%) | 0.0 |
+
+* tau_mem 14 ms gives no gain: seed 1's +1.5 was seed noise. tau_14 is also 18% slower
+  (64 against 54 s/epoch), so `full` (tau_mem 50 ms) stays the configuration.
+* With augmentation the validation plateau is 89.7% (128 of 143) over three seeds.
+* `tau_14_crop_6000` (seed 1, 6 s crop) overflowed the hidden ring buffer in the first batch:
+  with tau_mem 14 ms a 6 s trial makes a neuron fire more than `MAX_SPIKES` = 6242 allows.
