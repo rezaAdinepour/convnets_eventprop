@@ -7,9 +7,9 @@
   "aug_zoom": [0.8, 1.2],
   "aug_rotate_deg": 10,
   "encoding": "counts",
-  "count_levels": 4,
+  "count_levels": 2,
   "runs": {
-    "counts_4_seed1": {"seed": 1},
-    "counts_4_seed2": {"seed": 2}
+    "counts_2_seed1": {"seed": 1},
+    "counts_2_seed2": {"seed": 2}
   }
 }

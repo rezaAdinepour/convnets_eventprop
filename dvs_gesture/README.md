@@ -698,3 +698,16 @@ The other six classes are 11-13 of 13 in every column.
   air drums and other gestures account for most of the remaining errors.
 * Air guitar is 13/13 on validation but 56% on the test set: the validation subjects make it
   easy, which is part of the 9-point gap between validation and test.
+
+### Count input (`configs/counts.json`)
+
+Training input spikes per count level with 4 levels (4 s crop, `20261125_222837_smoke_counts_4`):
+count >= 1: 85.2 M, >= 2: 30.2 M (35.4%), >= 3: 14.1 M (16.6%), >= 4: 7.4 M (8.7%). So a
+third of the occupancy bins hold more than one event, information that occupancy and
+EvDownsampling discard.
+
+With 4 levels the training model does not fit on the GPU (`cuda runtime error 2: out of
+memory`). EventProp keeps a spike-time ring buffer of batch x neurons x `MAX_SPIKES` float32
+for every population, the input included (`_build_in_hid_neuron_model` in mlGeNN's
+`event_prop_compiler.py`), and 34x34x8 input neurons need 7.4 GB for it, against 1.8 GB for
+34x34x2. The runs therefore use 2 levels (count >= 1 and count >= 2; 3.7 GB).
