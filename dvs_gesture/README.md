@@ -17,6 +17,7 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 | `model.py` | Network definition and the training / inference compilers |
 | `train.py` | Training loop with per-epoch CSV logs and checkpoints |
 | `evaluate.py` | Reload the best epoch and evaluate validation (or, once, the test set) |
+| `ensemble.py` | Validation only: per class and subject accuracy of several runs (e.g. seeds) at one epoch, of their weights averaged over the last epochs (SWA), and of the ensembles that average their softmax outputs |
 | `plot_training.py` | Plot validation accuracy and training loss of one or more runs |
 | `compare_conv1_filters.py` | Plot a run's conv1 filters next to those of the Arfa et al. snnTorch checkpoint (read without PyTorch), matched one-to-one by cosine similarity |
 | `polarity_balance.py` | ON vs OFF counts of the raw events and of the EvDownsampling input (from the training cache), per split and class |
