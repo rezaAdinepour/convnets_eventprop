@@ -41,6 +41,11 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 * `--encoding occupancy` (default): one spike per pixel, polarity and 1 ms bin that
   contains at least one event, using mlGeNN's
   `preprocess_tonic_spikes(dt=1, histogram_thresh=1)`.
+* `--encoding counts`: the event counts of the occupancy bins, thermometer coded because
+  `SpikeInput` emits at most one spike per neuron and 1 ms step. Each polarity gets
+  `--count-levels K` channels (default 4); channel k (k = 1..K) spikes in a bin with at
+  least k events, so the input is 34x34x2K and channels k = 1 are the occupancy encoding.
+  Real time only (`--crop-ms`, not `--trial-ms`). Training prints the input spikes per level.
 * `--encoding evdownsampling`: the authors' real-time GeNN implementation
   (`EventDownsampleGeNN` in `event_downsampling_genn.py`), with the parameters of
   their `test_script_genn.py` (tau_theta 420 ms, tau_accumulator 16 ms, beta 1.2, dt 1 ms).

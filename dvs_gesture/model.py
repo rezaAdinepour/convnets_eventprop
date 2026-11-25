@@ -46,7 +46,8 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
                   max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS,
                   downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS,
                   spiking_weight_sd=SPIKING_WEIGHT_SD, channels=CHANNELS,
-                  synapse="exponential", subtract_reset=False, readout="avg_var_exp_weight"):
+                  synapse="exponential", subtract_reset=False, readout="avg_var_exp_weight",
+                  input_channels=INPUT_SHAPE[2]):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
 
     ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
@@ -61,6 +62,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     ``subtract_reset`` subtracts the threshold after a spike instead of resetting v to 0.
     ``readout`` is the output readout: avg_var_exp_weight weights v by exp(-t / trial),
     so the end of the trial counts 37% of the start; avg_var weights all times equally.
+    ``input_channels`` is the number of input channels per pixel (2K for K count levels).
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
@@ -93,7 +95,8 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     c1, c2, c3 = channels
     network = SequentialNetwork()
     with network:
-        InputLayer(SpikeInput(max_spikes=max_input_spikes_per_batch), INPUT_SHAPE, name="input")
+        InputLayer(SpikeInput(max_spikes=max_input_spikes_per_batch),
+                   INPUT_SHAPE[:2] + (input_channels,), name="input")
         Layer(Conv2D(spiking_weights, c1, 5, conv_strides=2, **delay("conv1")),
               lif(), synapse=spiking_synapse(), record_spikes=True, name="conv1",
               **layer_delay("conv1"))

@@ -1,0 +1,15 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "encoding": "counts",
+  "count_levels": 4,
+  "runs": {
+    "counts_4_seed1": {"seed": 1},
+    "counts_4_seed2": {"seed": 2}
+  }
+}

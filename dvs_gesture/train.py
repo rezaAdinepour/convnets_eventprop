@@ -11,9 +11,9 @@ from ml_genn.callbacks import (Callback, Checkpoint, OptimiserParamSchedule, Spi
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
-from data import (BETA, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS, augment_spikes,
-                  augmentation_growth, encode_recordings, load_dataset, max_spikes_per_neuron,
-                  split_train_validation)
+from data import (BETA, COUNT_LEVELS, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS,
+                  augment_spikes, augmentation_growth, count_level_spikes, encode_recordings,
+                  input_channels, load_dataset, max_spikes_per_neuron, split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS,
                    LAYER_NAMES, DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES,
                    REG_STRENGTH, REG_TARGET, SEED, SPIKING_WEIGHT_SD, SYNAPSES, READOUTS,
@@ -213,6 +213,8 @@ def main():
                              "override it")
     parser.add_argument("--run", default=None, help="Run name from the config's runs")
     parser.add_argument("--encoding", choices=ENCODINGS, default="occupancy")
+    parser.add_argument("--count-levels", type=int, default=COUNT_LEVELS,
+                        help="counts encoding: channels per polarity (count >= 1, ..., >= this)")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT,
                         help="EventProp adjoint limit multiplier (default: mlGeNN's 100)")
@@ -303,8 +305,8 @@ def main():
         parser.error("--aug-shift-px and --aug-rotate-deg must be >= 0, "
                      "--aug-zoom needs 0 < low <= high")
     args.channels = tuple(args.channels)
-    if args.output_lr_factor <= 0 or min(args.channels) < 1:
-        parser.error("--output-lr-factor must be > 0 and --channels >= 1")
+    if args.output_lr_factor <= 0 or min(args.channels) < 1 or args.count_levels < 1:
+        parser.error("--output-lr-factor must be > 0, --channels and --count-levels >= 1")
     augment = args.aug_shift_px > 0 or args.aug_rotate_deg > 0 or args.aug_zoom != (1.0, 1.0)
 
     np.random.seed(args.seed)
@@ -318,10 +320,12 @@ def main():
     evd_params = (args.evd_tau_theta_ms, args.evd_tau_accumulator_ms, args.evd_beta)
     train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
                                                     "Encoding training", args.trial_ms,
-                                                    cache_dir, args.crop_ms, evd_params)
+                                                    cache_dir, args.crop_ms, evd_params,
+                                                    args.count_levels)
     val_x, val_y, val_len = encode_recordings(dataset, val_idx, args.encoding,
                                               "Encoding validation", args.trial_ms,
-                                              cache_dir, args.crop_ms, evd_params)
+                                              cache_dir, args.crop_ms, evd_params,
+                                              args.count_levels)
 
     example_timesteps = int(max(train_len.max(), val_len.max()))
     if args.train_all:
@@ -335,6 +339,11 @@ def main():
     print(f"Train: {len(train_x)}, validation: {len(val_x)}, encoding: {args.encoding}")
     print(f"Trial: {example_timesteps} ms, input buffer: {input_buffer} spikes, "
           f"busiest input neuron: {peak_input} spikes per gesture")
+    if args.encoding == "counts":
+        levels = count_level_spikes(train_x, args.count_levels)
+        print("Training input spikes per count level (count >= k, % of k = 1): " +
+              ", ".join(f"{k + 1}: {n} ({100 * n / levels[0]:.1f}%)"
+                        for k, n in enumerate(levels)))
     if augment:
         print(f"Augmentation: shift +-{args.aug_shift_px} px, zoom {args.aug_zoom[0]}-"
               f"{args.aug_zoom[1]}, rotation +-{args.aug_rotate_deg} deg")
@@ -348,8 +357,8 @@ def main():
     os.chdir(args.run_dir)
 
     Path("run_config.json").write_text(json.dumps(dict(
-        encoding=args.encoding, trial_ms=args.trial_ms, crop_ms=args.crop_ms,
-        epochs=args.epochs,
+        encoding=args.encoding, count_levels=args.count_levels, trial_ms=args.trial_ms,
+        crop_ms=args.crop_ms, epochs=args.epochs,
         example_timesteps=example_timesteps,
         input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
@@ -370,7 +379,8 @@ def main():
     network = build_network(input_buffer, args.delay_layers, args.max_delay_ms,
                             args.init_delay_ms, args.downsample, not args.no_hidden,
                             args.tau_mem_ms, args.tau_syn_ms, args.spiking_weight_sd,
-                            args.channels, args.synapse, args.subtract_reset, args.readout)
+                            args.channels, args.synapse, args.subtract_reset, args.readout,
+                            input_channels(args.encoding, args.count_levels))
     print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]

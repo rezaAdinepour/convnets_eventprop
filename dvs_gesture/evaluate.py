@@ -9,7 +9,8 @@ from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 from tonic.datasets import DVSGesture
 
-from data import (EVDOWNSAMPLING_PARAMS, NUM_CLASSES, encode_recordings, load_dataset,
+from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, NUM_CLASSES, encode_recordings,
+                  input_channels, load_dataset,
                   split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
                    compile_for_inference, delay_connections)
@@ -49,7 +50,8 @@ def main():
                                       trial_ms=config.get("trial_ms"),
                                       cache_dir=config.get("cache_dir"),
                                       crop_ms=config.get("crop_ms"),
-                                      evd_params=config.get("evd_params", EVDOWNSAMPLING_PARAMS))
+                                      evd_params=config.get("evd_params", EVDOWNSAMPLING_PARAMS),
+                                      count_levels=config.get("count_levels", COUNT_LEVELS))
 
     timesteps = config["example_timesteps"]
     if lengths.max() > timesteps:
@@ -65,7 +67,9 @@ def main():
                             channels=config.get("channels", CHANNELS),
                             synapse=config.get("synapse", "exponential"),
                             subtract_reset=config.get("subtract_reset", False),
-                            readout=config.get("readout", "avg_var_exp_weight"))
+                            readout=config.get("readout", "avg_var_exp_weight"),
+                            input_channels=input_channels(
+                                config["encoding"], config.get("count_levels", COUNT_LEVELS)))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
         # Training rounds the learned delays the same way (EventPropCompiler)

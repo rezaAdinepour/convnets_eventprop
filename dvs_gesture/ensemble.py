@@ -18,13 +18,14 @@ import numpy as np
 from ml_genn.utils.data import calc_max_spikes
 from tonic.datasets import DVSGesture
 
-from data import EVDOWNSAMPLING_PARAMS, encode_recordings, load_dataset, split_train_validation
+from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, encode_recordings, input_channels,
+                  load_dataset, split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
                    compile_for_inference)
 
 # Settings of older runs that train.py did not save yet
 DEFAULTS = dict(channels=list(CHANNELS), readout="avg_var_exp_weight", synapse="exponential",
-                subtract_reset=False, output_lr_factor=1.0)
+                subtract_reset=False, output_lr_factor=1.0, count_levels=COUNT_LEVELS)
 PER_RUN = ("seed", "run", "config")
 
 
@@ -86,7 +87,8 @@ def main():
     x, y, _ = encode_recordings(dataset, indices, config["encoding"],
                                 trial_ms=config.get("trial_ms"), cache_dir=config.get("cache_dir"),
                                 crop_ms=config.get("crop_ms"),
-                                evd_params=config.get("evd_params", EVDOWNSAMPLING_PARAMS))
+                                evd_params=config.get("evd_params", EVDOWNSAMPLING_PARAMS),
+                                count_levels=config.get("count_levels", COUNT_LEVELS))
     subjects = np.array([dataset.users[i] for i in indices])
 
     # One network for all models: a second build would rename its layers (conv1_1, ...)
@@ -96,7 +98,9 @@ def main():
                             tau_mem_ms=config.get("tau_mem_ms", TAU_MEM_MS),
                             tau_syn_ms=config.get("tau_syn_ms", TAU_SYN_MS),
                             channels=config["channels"], synapse=config["synapse"],
-                            subtract_reset=config["subtract_reset"], readout=config["readout"])
+                            subtract_reset=config["subtract_reset"], readout=config["readout"],
+                            input_channels=input_channels(
+                                config["encoding"], config.get("count_levels", COUNT_LEVELS)))
     connections = [c.name for c in network.connections]
     input_pop, output_pop = network.populations[0], network.populations[-1]
     os.chdir(work_dir)

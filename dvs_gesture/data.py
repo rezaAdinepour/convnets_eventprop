@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from ml_genn.utils.data import PreprocessedSpikes, preprocess_tonic_spikes
+from ml_genn.utils.data import PreprocessedSpikes, preprocess_spikes, preprocess_tonic_spikes
 from tonic import transforms
 from tonic.datasets import DVSGesture
 from tqdm import tqdm
@@ -24,7 +24,12 @@ INPUT_SHAPE = (SENSOR_SIZE // SPATIAL_FACTOR + 2 * BORDER,
                SENSOR_SIZE // SPATIAL_FACTOR + 2 * BORDER, 2)
 DENOISE_US = 10_000
 
-ENCODINGS = ("occupancy", "evdownsampling")
+ENCODINGS = ("occupancy", "evdownsampling", "counts")
+COUNT_LEVELS = 4
+
+
+def input_channels(encoding, count_levels=COUNT_LEVELS):
+    return 2 * count_levels if encoding == "counts" else 2
 
 # EvDownsampling parameters from the authors' test_script_genn.py
 EVDOWNSAMPLING_REPO = Path(os.environ.get(
@@ -128,27 +133,69 @@ def encode_gesture(events, encoding, trial_ms=None, downsampler=None):
     return spikes, num_bins
 
 
+def encode_counts(events, levels):
+    """Return (spikes, num_bins): thermometer-coded event counts in real time.
+
+    Events are denoised and downsampled as for occupancy. Channel p * levels + k of a
+    pixel spikes in every 1 ms bin with more than k events of polarity p, so channels
+    k = 0 are the occupancy encoding.
+    """
+    events = transforms.Denoise(filter_time=DENOISE_US)(events)
+    if len(events) == 0:
+        raise ValueError("Recording is empty after denoising")
+    bin_us = BIN_MS * 1000
+    t0 = int(events["t"][0])
+    num_bins = max(1, (int(events["t"][-1]) - t0) // bin_us)
+    events = events[events["t"] < t0 + num_bins * bin_us]
+    events = transforms.Downsample(spatial_factor=1 / SPATIAL_FACTOR)(events)
+
+    width, height, _ = INPUT_SHAPE
+    pixel = ((events["y"].astype(np.int64) + BORDER) * width
+             + events["x"].astype(np.int64) + BORDER)
+    cell = ((pixel * 2 + events["p"].astype(np.int64)) * num_bins
+            + (events["t"].astype(np.int64) - t0) // bin_us)
+    cells, counts = np.unique(cell, return_counts=True)
+    channel, bins = np.divmod(cells, num_bins)
+    pixel, polarity = np.divmod(channel, 2)
+    level = np.minimum(counts, levels)
+    first = np.cumsum(level) - level
+    ids = (np.repeat(pixel * 2 * levels + polarity * levels, level)
+           + np.arange(level.sum()) - np.repeat(first, level))
+    times = np.repeat(bins * BIN_MS, level).astype(float)
+    return preprocess_spikes(times, ids, width * height * 2 * levels), num_bins
+
+
+def count_level_spikes(spikes, levels):
+    """Input spikes per count level, summed over recordings, pixels and polarities."""
+    total = sum(np.diff(s.end_spikes, prepend=0) for s in spikes)
+    return total.reshape(-1, levels).sum(axis=0)
+
+
 def crop_events(events, crop_ms):
     """Keep the first crop_ms ms of real time, starting at the first event."""
     return events[events["t"] < events["t"][0] + crop_ms * 1000]
 
 
 def encode_recordings(dataset, indices, encoding, description="Encoding", trial_ms=None,
-                      cache_dir=None, crop_ms=None, evd_params=EVDOWNSAMPLING_PARAMS):
+                      cache_dir=None, crop_ms=None, evd_params=EVDOWNSAMPLING_PARAMS,
+                      count_levels=COUNT_LEVELS):
     """Encode the given recordings; return spikes, labels and lengths in bins.
 
     crop_ms keeps only the first crop_ms ms of each recording in real time
     (instead of compressing it with trial_ms). evd_params are the EvDownsampling
-    parameters, see create_downsampler.
+    parameters, see create_downsampler; count_levels the levels of encode_counts.
 
     With cache_dir, the result is stored there and reused by later calls with
     the same recordings, encoding, trial_ms, crop_ms, evd_params and encoder code.
     """
     if trial_ms is not None and crop_ms is not None:
         raise ValueError("Use either trial_ms or crop_ms, not both")
+    if encoding == "counts" and trial_ms is not None:
+        raise ValueError("The counts encoding keeps real time; use crop_ms, not trial_ms")
     evd_params = tuple(float(p) for p in evd_params)
     if cache_dir is not None:
-        key = _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params)
+        key = _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params,
+                         count_levels)
         length = f"crop{crop_ms}" if crop_ms is not None else (trial_ms or "full")
         cache_file = Path(cache_dir) / f"{encoding}_{length}_{key}.npz"
         if cache_file.exists():
@@ -165,7 +212,10 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
         events, label = dataset[i]
         if crop_ms is not None:
             events = crop_events(events, crop_ms)
-        s, num_bins = encode_gesture(events, encoding, trial_ms, downsampler)
+        if encoding == "counts":
+            s, num_bins = encode_counts(events, count_levels)
+        else:
+            s, num_bins = encode_gesture(events, encoding, trial_ms, downsampler)
         spikes.append(s)
         labels.append(label)
         lengths.append(num_bins)
@@ -179,12 +229,15 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
     return spikes, labels, lengths
 
 
-def _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params):
+def _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params, count_levels):
     """Hash of everything that determines the encoded spikes."""
     key = hashlib.sha256()
     key.update(repr((encoding, trial_ms, DENOISE_US, SPATIAL_FACTOR, BORDER, INPUT_SHAPE,
                      [str(dataset.data[i]) for i in indices])).encode())
     key.update(inspect.getsource(encode_gesture).encode())
+    if encoding == "counts":
+        key.update(repr(count_levels).encode())
+        key.update(inspect.getsource(encode_counts).encode())
     if encoding == "evdownsampling":
         key.update(repr(evd_params).encode())
         key.update(inspect.getsource(evdownsampling_events).encode())
@@ -225,10 +278,11 @@ def augment_spikes(spikes, rng, shift_px=0.0, zoom=(1.0, 1.0), rotate_deg=0.0):
     One draw per recording: shift uniform in +-shift_px pixels per axis, zoom
     factor uniform in zoom, rotation uniform in +-rotate_deg degrees about the
     centre. Each input neuron copies the spike train of the nearest source pixel
-    (same polarity), so no neuron fires more often than before; the border stays
+    (same channel), so no neuron fires more often than before; the border stays
     silent. Pixels pulled from outside the sensor are silent.
     """
-    width, height, channels = INPUT_SHAPE
+    width, height, _ = INPUT_SHAPE
+    channels = len(spikes[0].end_spikes) // (width * height)
     inner = SENSOR_SIZE // SPATIAL_FACTOR
     centre = (inner - 1) / 2
     grid_y, grid_x = np.meshgrid(np.arange(inner), np.arange(inner), indexing="ij")
