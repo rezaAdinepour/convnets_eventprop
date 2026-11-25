@@ -133,14 +133,19 @@ def delay_connections(network):
 def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
                          reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED,
                          delay_learning_rate=DELAY_LEARNING_RATE,
-                         learning_rate=LEARNING_RATE, output_lr_factor=1.0):
-    """``output_lr_factor`` scales the weight learning rate of the output connection."""
+                         learning_rate=LEARNING_RATE, output_lr_factor=1.0,
+                         batch_size=BATCH_SIZE):
+    """``output_lr_factor`` scales the weight learning rate of the output connection.
+
+    EventProp keeps a spike-time ring of batch_size x neurons x MAX_SPIKES float32 per
+    population (input included), so the GPU memory grows with ``batch_size``.
+    """
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
         example_timesteps=example_timesteps,
 
         losses=SparseCategoricalCrossentropy(record_key="loss"),
-        dt=BIN_MS, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
+        dt=BIN_MS, batch_size=batch_size, max_spikes=MAX_SPIKES,
         strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)
     adam = Adam(alpha=learning_rate)
     optimisers = {"all_connections": {"weight": adam}}

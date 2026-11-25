@@ -155,6 +155,10 @@ one source, so the input buffer is then 4x larger, and training stops if an epoc
 augmented input would not fit. No horizontal flips: they swap the left- and right-arm
 classes.
 
+`batch_size` (default 32) is the training batch; it scales that ring memory linearly.
+Inference (`evaluate.py`, `ensemble.py`) always uses batch 32. The run directory keeps
+the `dvs_gesture_b32_` prefix whatever the batch; `run_config.json` records the real one.
+
 `output_lr_factor` (default 1) scales the Adam learning rate of the output weights only;
 the schedule keeps the ratio. `channels` (default `[16, 16, 8]`) sets the filters of conv1-3.
 Memory grows with the number of neurons: EventProp keeps a spike-time ring of
@@ -711,3 +715,8 @@ memory`). EventProp keeps a spike-time ring buffer of batch x neurons x `MAX_SPI
 for every population, the input included (`_build_in_hid_neuron_model` in mlGeNN's
 `event_prop_compiler.py`), and 34x34x8 input neurons need 7.4 GB for it, against 1.8 GB for
 34x34x2. The runs therefore use 2 levels (count >= 1 and count >= 2; 3.7 GB).
+
+2 levels (34x34x4 input, `20261125_224253_smoke_counts_2`) do not fit either. The runs
+therefore use batch 16, which halves every ring (4 levels then need about as much memory as
+2 levels at batch 32), with a batch-16 control of the EvDownsampling `full` setup for each
+seed: `b16_seed1`, `counts_4_b16_seed1`, `b16_seed2`, `counts_4_b16_seed2`.

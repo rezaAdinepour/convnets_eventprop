@@ -166,11 +166,11 @@ class DelayLog(Callback):
                            at_max=np.mean(d >= connection.max_delay_steps - 0.5))
 
 
-def lambda_recorders(layers):
+def lambda_recorders(layers, batch_size):
     # Batch 1 runs the backward pass of batch 0, so lane 0 of batch 1
     # holds lambda_V of the first training example of the epoch.
     return [VarRecorder(layer, "Lambdav", key=("lambda", layer.name),
-                        example_filter=[BATCH_SIZE]) for layer in layers]
+                        example_filter=[batch_size]) for layer in layers]
 
 
 def log_lambda_trace(log, epoch, data, limits, layers):
@@ -216,6 +216,8 @@ def main():
     parser.add_argument("--count-levels", type=int, default=COUNT_LEVELS,
                         help="counts encoding: channels per polarity (count >= 1, ..., >= this)")
     parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE,
+                        help="Training batch size (GPU memory grows with it)")
     parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT,
                         help="EventProp adjoint limit multiplier (default: mlGeNN's 100)")
     parser.add_argument("--reg-target", type=float, default=REG_TARGET,
@@ -305,8 +307,10 @@ def main():
         parser.error("--aug-shift-px and --aug-rotate-deg must be >= 0, "
                      "--aug-zoom needs 0 < low <= high")
     args.channels = tuple(args.channels)
-    if args.output_lr_factor <= 0 or min(args.channels) < 1 or args.count_levels < 1:
-        parser.error("--output-lr-factor must be > 0, --channels and --count-levels >= 1")
+    if (args.output_lr_factor <= 0 or min(args.channels) < 1 or args.count_levels < 1
+            or args.batch_size < 1):
+        parser.error("--output-lr-factor must be > 0, --channels, --count-levels and "
+                     "--batch-size >= 1")
     augment = args.aug_shift_px > 0 or args.aug_rotate_deg > 0 or args.aug_zoom != (1.0, 1.0)
 
     np.random.seed(args.seed)
@@ -333,7 +337,7 @@ def main():
         train_y = np.concatenate((train_y, val_y))
         val_x, val_y = [], val_y[:0]
     growth = augmentation_growth(args.aug_zoom, args.aug_rotate_deg) if augment else 1
-    input_buffer = BATCH_SIZE * calc_max_spikes(train_x + val_x) * growth
+    input_buffer = args.batch_size * calc_max_spikes(train_x + val_x) * growth
     peak_input = max_spikes_per_neuron(train_x + val_x)
     train_spikes = sum(len(s.spike_times) for s in train_x)
     print(f"Train: {len(train_x)}, validation: {len(val_x)}, encoding: {args.encoding}")
@@ -360,7 +364,7 @@ def main():
         encoding=args.encoding, count_levels=args.count_levels, trial_ms=args.trial_ms,
         crop_ms=args.crop_ms, epochs=args.epochs,
         example_timesteps=example_timesteps,
-        input_buffer=input_buffer, batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES,
+        input_buffer=input_buffer, batch_size=args.batch_size, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
         lambda_epochs=args.lambda_epochs, delay_layers=args.delay_layers,
@@ -386,7 +390,8 @@ def main():
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,
                                     args.reg_strength, args.reg_target, args.seed,
-                                    args.delay_lr, args.lr, args.output_lr_factor)
+                                    args.delay_lr, args.lr, args.output_lr_factor,
+                                    args.batch_size)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds", "lr"])
@@ -412,7 +417,7 @@ def main():
             if augment:
                 epoch_x = augment_spikes(train_x, augment_rng, args.aug_shift_px,
                                          args.aug_zoom, args.aug_rotate_deg)
-                if BATCH_SIZE * calc_max_spikes(epoch_x) > input_buffer:
+                if args.batch_size * calc_max_spikes(epoch_x) > input_buffer:
                     raise ValueError(f"Augmented input needs more than {input_buffer} spikes")
                 kept = sum(len(s.spike_times) for s in epoch_x) / train_spikes
                 kept = f", augmented input keeps {kept:.1%} of the spikes"
@@ -424,7 +429,7 @@ def main():
             trace = epoch in args.lambda_epochs
             if trace:
                 limit_recorder = BackwardLimitRecorder(hidden_layers)
-                callbacks += [limit_recorder, *lambda_recorders(hidden_layers)]
+                callbacks += [limit_recorder, *lambda_recorders(hidden_layers, args.batch_size)]
             if args.train_all:
                 train_metrics, train_data = compiled.train(
                     {input_pop: epoch_x}, {output_pop: train_y},

@@ -6,10 +6,11 @@
   "aug_shift_px": 4,
   "aug_zoom": [0.8, 1.2],
   "aug_rotate_deg": 10,
-  "encoding": "counts",
-  "count_levels": 2,
+  "batch_size": 16,
   "runs": {
-    "counts_2_seed1": {"seed": 1},
-    "counts_2_seed2": {"seed": 2}
+    "b16_seed1": {"seed": 1},
+    "counts_4_b16_seed1": {"encoding": "counts", "count_levels": 4, "seed": 1},
+    "b16_seed2": {"seed": 2},
+    "counts_4_b16_seed2": {"encoding": "counts", "count_levels": 4, "seed": 2}
   }
 }
