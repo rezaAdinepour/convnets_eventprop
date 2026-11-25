@@ -642,3 +642,25 @@ subjects are fixed. Seed 1 is `20261123_010633_full` and `20261124_181245_tau_14
 * With augmentation the validation plateau is 89.7% (128 of 143) over three seeds.
 * `tau_14_crop_6000` (seed 1, 6 s crop) overflowed the hidden ring buffer in the first batch:
   with tau_mem 14 ms a 6 s trial makes a neuron fire more than `MAX_SPIKES` = 6242 allows.
+
+### Output readout and 6 s crop seed repeats (`configs/readout_crop.json`, 100 epochs)
+
+Both ideas target the classes that differ mainly in rhythm (hand clapping, air drums, air
+guitar). `avg_var` weights the output voltage equally over the trial instead of by
+exp(-t / trial); the 6 s crop shows more cycles of each gesture. Each run is paired with the
+`full` (or `crop_6000`) run of the same seed; only the seed or readout differs.
+
+| Run | Best (epoch) | Last 20 | Reference: last 20 | Difference |
+|---|---|---|---|---|
+| `20261125_063731_avg_var_seed1` | 132 (89) | 130.9 | `full` seed 1: 129.7 | +1.2 |
+| `20261125_094015_avg_var_seed2` | 130 (74) | 125.0 | `full` seed 2: 127.5 | -2.5 |
+| `20261125_080445_crop_6000_seed2` | 124 (78) | 122.5 | `full` seed 2: 127.5 | -5.0 |
+| `20261125_110656_crop_6000_seed3` | 124 (51) | 123.8 | `full` seed 3: 127.4 | -3.6 |
+| `20261125_124126_crop_6000_avg_var` (seed 1) | 127 (52) | 123.0 | `crop_6000` seed 1: 131.0 | -8.0 |
+
+* `avg_var` gives no gain (mean difference -0.7 over two seeds), so the default
+  `avg_var_exp_weight` stays.
+* The 6 s crop is worse: over seeds 1-3 it averages 125.8 +- 4.6 against 128.2 +- 1.3 for the
+  4 s `full` (mean paired difference -2.4). Seed 1's +1.3 was seed noise. The 4 s crop stays.
+* Activity is unchanged (train means over epochs 80-99: conv1 50, conv2 60-62, conv3 84,
+  hidden 97 spikes per neuron and gesture) and no run overflowed the ring buffer.
