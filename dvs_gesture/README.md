@@ -665,3 +665,31 @@ exp(-t / trial); the 6 s crop shows more cycles of each gesture. Each run is pai
   4 s `full` (mean paired difference -2.4). Seed 1's +1.3 was seed noise. The 4 s crop stays.
 * Activity is unchanged (train means over epochs 80-99: conv1 50, conv2 60-62, conv3 84,
   hidden 97 spikes per neuron and gesture) and no run overflowed the ring buffer.
+
+### Seed ensemble and weight averaging (`ensemble.py`, `full` seeds 1-3, epoch 99)
+
+Validation only (`Experiments/dvs_gesture_ensemble_full_seeds/`). `_swa` averages the weights
+of epochs 80-99 into one network; the ensembles average the softmax outputs of the three
+seeds. The single-run results match those logged during training (129, 127, 128).
+
+| | seed 1 | seed 1 SWA | seed 2 | seed 2 SWA | seed 3 | seed 3 SWA | Ensemble | Ensemble SWA |
+|---|---|---|---|---|---|---|---|---|
+| All (143) | 129 | 131 | 127 | 128 | 128 | 127 | 131 | 131 |
+| Hand clapping (13) | 5 | 5 | 8 | 8 | 7 | 7 | 6 | 6 |
+| Arm roll (13) | 12 | 13 | 9 | 10 | 11 | 10 | 12 | 12 |
+| Air drums (13) | 12 | 12 | 11 | 11 | 10 | 10 | 11 | 11 |
+| Air guitar (13) | 13 | 13 | 13 | 13 | 13 | 13 | 13 | 13 |
+| Other gestures (13) | 10 | 11 | 10 | 10 | 9 | 9 | 11 | 11 |
+| Subject 21 (44) | 41 | 41 | 42 | 42 | 43 | 43 | 42 | 42 |
+| Subject 22 (55) | 50 | 50 | 43 | 44 | 45 | 44 | 47 | 47 |
+| Subject 23 (44) | 38 | 40 | 42 | 42 | 40 | 40 | 42 | 42 |
+
+The other six classes are 11-13 of 13 in every column.
+
+* The ensemble gives 131 against a single-run mean of 128.0 (+2.1 points). SWA gives +0.7
+  recordings on average, which is negligible.
+* Hand clapping is the weakest validation class (5-8 of 13), as on the test set (58%). The
+  ensemble does not fix it, so its errors are systematic rather than seed noise. Arm roll,
+  air drums and other gestures account for most of the remaining errors.
+* Air guitar is 13/13 on validation but 56% on the test set: the validation subjects make it
+  easy, which is part of the 9-point gap between validation and test.
