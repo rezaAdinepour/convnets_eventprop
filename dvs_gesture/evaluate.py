@@ -64,7 +64,8 @@ def main():
                             tau_syn_ms=config.get("tau_syn_ms", TAU_SYN_MS),
                             channels=config.get("channels", CHANNELS),
                             synapse=config.get("synapse", "exponential"),
-                            subtract_reset=config.get("subtract_reset", False))
+                            subtract_reset=config.get("subtract_reset", False),
+                            readout=config.get("readout", "avg_var_exp_weight"))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
         # Training rounds the learned delays the same way (EventPropCompiler)

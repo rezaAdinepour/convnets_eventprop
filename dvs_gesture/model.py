@@ -37,6 +37,7 @@ DELAY_LEARNING_RATE = 0.1
 
 DOWNSAMPLING = ("pool", "stride", "conv3-stride")
 SYNAPSES = ("exponential", "delta")
+READOUTS = ("avg_var_exp_weight", "avg_var", "max_var")
 
 CHANNELS = (16, 16, 8)
 
@@ -45,7 +46,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
                   max_delay_ms=MAX_DELAY_MS, init_delay_ms=INIT_DELAY_MS,
                   downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS,
                   spiking_weight_sd=SPIKING_WEIGHT_SD, channels=CHANNELS,
-                  synapse="exponential", subtract_reset=False):
+                  synapse="exponential", subtract_reset=False, readout="avg_var_exp_weight"):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
 
     ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
@@ -58,6 +59,8 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     (the input is injected for one step, so a spike moves v by
     weight * (1 - exp(-dt / tau_mem))); the output keeps the exponential synapse.
     ``subtract_reset`` subtracts the threshold after a spike instead of resetting v to 0.
+    ``readout`` is the output readout: avg_var_exp_weight weights v by exp(-t / trial),
+    so the end of the trial counts 37% of the start; avg_var weights all times equally.
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
@@ -113,7 +116,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
             Layer(connectivity, lif(), 256, synapse=spiking_synapse(), record_spikes=True,
                   name="hidden", **layer_delay("hidden"))
         Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD), **delay("output")),
-              LeakyIntegrate(tau_mem=TAU_MEM_MS, readout="avg_var_exp_weight"),
+              LeakyIntegrate(tau_mem=TAU_MEM_MS, readout=readout),
               NUM_CLASSES, synapse=Exponential(tau_syn_ms), name="output",
               **layer_delay("output"))
     return network

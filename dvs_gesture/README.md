@@ -135,7 +135,8 @@ Besides the options above, the configs can set `tau_mem_ms` (spiking layers; the
 output readout keeps 20 ms), `tau_syn_ms`, `spiking_weight_sd` (initial weight sd of
 the spiking layers, default 0.375), `synapse` of the spiking layers (`exponential`,
 default, or `delta`; the output keeps the exponential synapse), `subtract_reset` (subtract
-the threshold after a spike instead of resetting v to 0; default off) and the EvDownsampling
+the threshold after a spike instead of resetting v to 0; default off), `readout` of the output
+(`avg_var_exp_weight`, default, `avg_var` or `max_var`) and the EvDownsampling
 parameters `evd_tau_theta_ms`, `evd_tau_accumulator_ms` and `evd_beta` (defaults 420, 16, 1.2).
 
 Training data augmentation (`aug_shift_px`, `aug_zoom` as `[low, high]`, `aug_rotate_deg`;

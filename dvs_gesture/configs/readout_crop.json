@@ -1,0 +1,19 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "runs": {
+    "avg_var_seed1": {"readout": "avg_var", "seed": 1},
+    "crop_6000_seed2": {"crop_ms": 6000, "grad_limit": 300, "reg_strength": [3e-9, 3e-9],
+                        "seed": 2},
+    "avg_var_seed2": {"readout": "avg_var", "seed": 2},
+    "crop_6000_seed3": {"crop_ms": 6000, "grad_limit": 300, "reg_strength": [3e-9, 3e-9],
+                        "seed": 3},
+    "crop_6000_avg_var": {"crop_ms": 6000, "grad_limit": 300, "reg_strength": [3e-9, 3e-9],
+                          "readout": "avg_var", "seed": 1}
+  }
+}
