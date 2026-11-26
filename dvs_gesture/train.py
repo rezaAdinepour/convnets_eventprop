@@ -199,6 +199,7 @@ def main():
     parser.add_argument("--count-levels", type=int, default=COUNT_LEVELS)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--max-spikes", type=int, default=MAX_SPIKES, help="spike ring per neuron")
     parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT)
     parser.add_argument("--reg-target", type=float, default=REG_TARGET,
                         help="spikes per neuron per trial")
@@ -311,9 +312,9 @@ def main():
               f"{args.aug_zoom[1]}, rotation +-{args.aug_rotate_deg} deg")
     augment_rng = np.random.default_rng(args.seed)
 
-    if 2 * peak_input + 2 > MAX_SPIKES:
+    if 2 * peak_input + 2 > args.max_spikes:
         raise ValueError(f"An input neuron fires {peak_input} times; "
-                         f"MAX_SPIKES={MAX_SPIKES} must be at least {2 * peak_input + 2}")
+                         f"--max-spikes {args.max_spikes} must be at least {2 * peak_input + 2}")
 
     args.run_dir.mkdir(parents=True)
     os.chdir(args.run_dir)
@@ -322,7 +323,7 @@ def main():
         encoding=args.encoding, count_levels=args.count_levels, trial_ms=args.trial_ms,
         crop_ms=args.crop_ms, epochs=args.epochs,
         example_timesteps=example_timesteps,
-        input_buffer=input_buffer, batch_size=args.batch_size, max_spikes=MAX_SPIKES,
+        input_buffer=input_buffer, batch_size=args.batch_size, max_spikes=args.max_spikes,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
         val_subjects=args.val_subjects,
@@ -353,7 +354,7 @@ def main():
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,
                                     args.reg_strength, args.reg_target, args.seed,
                                     args.delay_lr, args.lr, args.output_lr_factor,
-                                    args.batch_size)
+                                    args.batch_size, args.max_spikes)
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds", "lr"])

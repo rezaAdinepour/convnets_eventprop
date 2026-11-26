@@ -111,12 +111,12 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
                          reg_strength=REG_STRENGTH, reg_target=REG_TARGET, seed=SEED,
                          delay_learning_rate=DELAY_LEARNING_RATE,
                          learning_rate=LEARNING_RATE, output_lr_factor=1.0,
-                         batch_size=BATCH_SIZE):
+                         batch_size=BATCH_SIZE, max_spikes=MAX_SPIKES):
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
         example_timesteps=example_timesteps,
         losses=SparseCategoricalCrossentropy(record_key="loss"),
-        dt=BIN_MS, batch_size=batch_size, max_spikes=MAX_SPIKES,
+        dt=BIN_MS, batch_size=batch_size, max_spikes=max_spikes,
         strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)
     adam = Adam(alpha=learning_rate)
     optimisers = {"all_connections": {"weight": adam}}

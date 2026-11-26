@@ -112,7 +112,7 @@ spikes that the pooled version gets; the initial weight sd (0.375) is unchanged.
 Batch size 32, Adam (lr 0.001, constant by default; see `--lr`, `--lr-schedule cosine`
 and `--warmup-epochs`), sparse categorical cross-entropy on the
 `avg_var_exp_weight` readout, LIF hidden neurons (tau_mem 20 ms, exponential
-synapses 5 ms), `strict_buffer_checking=True`, `max_spikes=6242`. Training data
+synapses 5 ms), `strict_buffer_checking=True`, `max_spikes=6242` (`--max-spikes`). Training data
 is reshuffled every epoch (`shuffle=True`).
 
 With mlGeNN's EventProp the backward pass of each batch runs during the next
@@ -951,3 +951,12 @@ Validation spikes per neuron per trial at epoch 99 (mean +- sd across neurons):
   stays near 100 by itself, but with a very broad spread (sd equal to the mean).
 * The hidden layer is therefore not held near 100 against its will: its mean ends there
   anyway. What the regulariser does is narrow the spread and keep the conv layers active.
+
+#### Regulariser target 200 and 400 (`configs/reg_target.json`)
+
+Jamie suggested the target of 100 spikes per trial (25 Hz) may be too low for DVS Gesture.
+At batch 32 a target of 400 overflows the hidden spike ring in epoch 0 (neuron 136, smoke
+run `20261126_222701_smoke_target_400`); even `full` reaches 3141 spikes in one trial in
+epoch 1, half of `MAX_SPIKES`. The runs therefore use batch 16 with `--max-spikes 12484`
+(the same memory), against the batch-16 controls `b16_seed1` and `b16_seed2` (124.7 and
+132.2, `configs/counts.json`).
