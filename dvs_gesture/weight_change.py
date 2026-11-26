@@ -7,7 +7,7 @@ Reads only checkpoints (no GPU). Per run, connection and epoch:
   correlation      Pearson correlation of W_e with W_init (1: unchanged pattern)
   sd               sd of W_e
   relative_step    ||W_e - W_(e-1)|| / ||W_init||, the size of one epoch's update
-Writes OUTPUT_DIR/weight_change.csv and weight_change.png.
+Writes OUTPUT_DIR/weight_change_from_init.csv and .png (OUTPUT_DIR may exist).
 """
 import argparse
 import csv
@@ -18,10 +18,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
+
+from run_labels import layer_title, load_config, run_label
 
 FIELDS = ["run", "connection", "epoch", "relative_change", "correlation", "sd", "relative_step"]
 METRICS = FIELDS[3:]
 STYLES = ("-", "--", ":", "-.")
+PANEL_TITLES = {
+    "relative_change": "Distance from the initial weights\n||W - W_initial|| / ||W_initial||",
+    "correlation": "Correlation with the initial weights\n(1 = weight pattern unchanged)",
+    "sd": "Standard deviation of the weights",
+    "relative_step": "Change in one epoch (log scale)\n||W_epoch - W_previous epoch|| / ||W_initial||"}
 
 
 def train_dir(path):
@@ -59,15 +67,21 @@ def run_rows(run_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("output_dir", type=Path, help="New directory for the outputs")
+    parser.add_argument("output_dir", type=Path, help="Directory for the outputs")
     parser.add_argument("run_dirs", type=Path, nargs="+", help="Directories written by train.py")
     args = parser.parse_args()
     if len(args.run_dirs) > len(STYLES):
         parser.error(f"At most {len(STYLES)} runs")
-    args.output_dir.mkdir(parents=True)
+    out = args.output_dir.resolve()
+    csv_path, png_path = out / "weight_change_from_init.csv", out / "weight_change_from_init.png"
+    if csv_path.exists() or png_path.exists():
+        parser.error(f"{csv_path} or {png_path} exists")
+    out.mkdir(parents=True, exist_ok=True)
 
-    rows = [r for d in args.run_dirs for r in run_rows(train_dir(d))]
-    with open(args.output_dir / "weight_change.csv", "w", newline="") as f:
+    run_dirs = [train_dir(d) for d in args.run_dirs]
+    configs = {d.parent.name: load_config(d) for d in run_dirs}
+    rows = [r for d in run_dirs for r in run_rows(d)]
+    with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, FIELDS)
         writer.writeheader()
         writer.writerows(rows)
@@ -80,24 +94,29 @@ def main():
             last = [r for r in rows if r["run"] == run and r["connection"] == c][-1]
             print(f"{run[-40:]:<42}{c:<10}" + "".join(f"{last[m]:17.3f}" for m in METRICS))
 
-    fig, axes = plt.subplots(1, len(METRICS), figsize=(4.2 * len(METRICS), 3.6))
+    fig, axes = plt.subplots(1, len(METRICS), figsize=(4.4 * len(METRICS), 4.4))
     colors = dict(zip(names, plt.rcParams["axes.prop_cycle"].by_key()["color"]))
     for ax, metric in zip(axes, METRICS):
         for run, style in zip(runs, STYLES):
             for c in names:
                 sel = [r for r in rows if r["run"] == run and r["connection"] == c]
                 ax.plot([r["epoch"] for r in sel], [r[metric] for r in sel], style,
-                        color=colors[c], label=c if run == runs[0] else None)
-        ax.set_title(metric.replace("_", " "))
-        ax.set_xlabel("Epoch")
+                        color=colors[c])
+        ax.set_title(PANEL_TITLES[metric], fontsize=9)
+        ax.set_xlabel("Training epoch")
         if metric == "relative_step":
             ax.set_yscale("log")
-    axes[0].legend(fontsize=8)
-    fig.suptitle("Weights against their initial values; line style per run: " +
-                 ", ".join(f"{s} {r}" for r, s in zip(runs, STYLES)), fontsize=8)
-    fig.tight_layout()
-    fig.savefig(args.output_dir / "weight_change.png", dpi=150)
-    print(f"Saved {args.output_dir / 'weight_change.png'}")
+    handles = [Line2D([], [], color=colors[c], label=layer_title(c)) for c in names]
+    handles += [Line2D([], [], color="black", linestyle=s, label=f"seed {configs[r]['seed']}")
+                for r, s in zip(runs, STYLES)]
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=8,
+               frameon=False)
+    kinds = sorted({run_label(c).rsplit(", seed", 1)[0] for c in configs.values()})
+    fig.suptitle("How far each layer's weights move from their random initial values during "
+                 "training\n" + "; ".join(kinds), fontsize=9)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    fig.savefig(png_path, dpi=200)
+    print(f"Saved {png_path}")
 
 
 if __name__ == "__main__":

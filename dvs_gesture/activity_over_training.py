@@ -17,7 +17,7 @@ from ml_genn.callbacks import SpikeRecorder
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
-from activity import FIELDS, activity_stats, plot_activity, read_activity
+from activity import FIELDS, activity_stats, describe_run, plot_activity, read_activity
 from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, VALIDATION_SUBJECTS, encode_recordings,
                   input_channels, load_dataset, split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
@@ -99,7 +99,8 @@ def main():
                           f"silent {stats['silent_fraction']:.3f}")
 
     plot_activity(read_activity("activity.csv"), work_dir / "activity.png",
-                  config["example_timesteps"], run_dir.parent.name)
+                  config["example_timesteps"], describe_run(config, args.split),
+                  config.get("reg_target"), args.split)
     (work_dir / "source.json").write_text(json.dumps(
         {"run_dir": str(run_dir), "epochs": epochs, "splits": args.split}, indent=2))
 

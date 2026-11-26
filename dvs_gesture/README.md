@@ -24,6 +24,7 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 | `weight_change.py` | Per layer and epoch, how far the weights moved from their initial values (relative change, correlation, sd, step size), from the checkpoints; no GPU |
 | `activity.py` | Spike statistics across neurons (mean, sd, percentiles; used by `train.py`) and their plot from a `spikes.csv` or `activity.csv` |
 | `activity_over_training.py` | Validation only: activity per layer over training, re-run from a run's checkpoints without augmentation |
+| `run_labels.py` | Plain-language names of runs and layers for figure titles and legends |
 | `polarity_balance.py` | ON vs OFF counts of the raw events and of the EvDownsampling input (from the training cache), per split and class |
 | `activity_profile.py` | Events per 500 ms bin of every training/validation recording: leading and trailing silences that trimming would remove |
 | `run.sh` | Run `train.py` in a new, timestamped experiment directory |
