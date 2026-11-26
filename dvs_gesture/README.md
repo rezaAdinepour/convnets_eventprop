@@ -840,3 +840,57 @@ rejects the idea: with fold 1 at -1.6, fold 2 would need a gain of +5.6 to reach
   trial on every spiking layer. `reg_off` sets it to 0, `reg_weak` to 5e-10, on seeds 1
   and 2 (controls: `full` seeds 1 and 2, 129.7 and 127.5). `smoke_reg_off` (2 epochs)
   checks first that the activity neither dies nor overflows the spike ring.
+
+#### Weight change from the initial values (`full` seeds 1-3, epoch 99)
+
+| Layer | Relative change | Correlation with initial | sd (initial 0.94) |
+|---|---|---|---|
+| conv1 | 0.74-0.78 | 0.85 | 1.24 |
+| conv2 | 0.55-0.59 | 0.88 | 1.09-1.12 |
+| conv3 | 0.38-0.43 | 0.92-0.94 | 0.99-1.03 |
+| hidden | 0.33-0.34 | 0.94 | 0.93 |
+| output | 0.56 | 0.87 | 1.11 |
+
+Every layer learns, and conv1 most (its weights grow by a third); the dense hidden layer
+moves least and keeps its initial sd, so it stays close to its random initialisation. The
+three seeds agree closely. The size of one epoch's update falls from about 1e-2 (epochs 5-60)
+to below 1e-4 after epoch 90 with the cosine learning-rate schedule, which is why weights,
+activity and accuracy are flat at the end of training (`dvs_gesture_weight_change_full`).
+
+#### Activity across neurons over training (`full` seed 1, validation, from checkpoints)
+
+`activity_over_training.py` reproduces the counts logged during training exactly (epoch 99:
+41.9 / 51.7 / 78.1 / 94.3 spikes per neuron per trial). Mean +- sd across neurons:
+
+| Epoch | conv1 | conv2 | conv3 | hidden |
+|---|---|---|---|---|
+| initial | 12 +- 18 | 12 +- 19 | 48 +- 48 | 117 +- 108 |
+| 2 | 29 +- 33 | 47 +- 47 | 45 +- 39 | 85 +- 46 |
+| 5 | 41 +- 43 | 46 +- 45 | 65 +- 43 | 91 +- 26 |
+| 15 | 41 +- 43 | 46 +- 43 | 67 +- 36 | 83 +- 16 |
+| 99 | 42 +- 42 | 52 +- 44 | 78 +- 31 | 94 +- 15 |
+
+The convolutional layers keep a broad distribution (conv1: sd equal to the mean, 5% of
+neurons silent, 5th-95th percentile 0-135), but within 15 epochs the hidden neurons are
+squeezed from 2-340 to 61-112 spikes (epoch 99: 75-124, sd 15), i.e. every hidden neuron
+fires close to the `SpikeCount` target of 100. This supports Thomas's concern that the
+regulariser dominates the hidden layer (`dvs_gesture_activity_full_seed1`).
+
+#### conv1 against Arfa et al. (`dvs_gesture_conv1_similarity`, raw cosine)
+
+Our filters match theirs at chance level: mean matched cosine 0.19-0.26 for the six runs
+against 0.20 +- 0.02 for random Gaussian banks (95th percentile 0.235). Two of six runs are
+slightly above that percentile. Our runs from different seeds match each other far better
+(final_aug seeds 0.58-0.61, `full` seeds 0.41-0.42, against 0.22 by chance), so training
+converges to a consistent kind of filter that differs from theirs. Our filters share a sign
+per polarity (OFF mostly positive, ON mostly negative), which alone raises their mutual
+cosine; `conv1_similarity.py` therefore also reports the spatial pattern with the mean per
+filter and polarity removed. Runs with the same seed (final_aug vs `full`) start from the
+same weights and stay close (0.92), so they are excluded from the seed-vs-seed baseline.
+
+#### Regulariser off: smoke run (`20261126_170405_smoke_reg_off`, 2 epochs)
+
+Without `SpikeCount`, the hidden layer fires less after one epoch (validation 33 against 108
+spikes per neuron with the regulariser, train 70 against 128) and the adjoint limits are
+about 10x smaller (less backward drive), but learning starts faster (validation 43 and 70
+after epochs 0 and 1, against 12 and 35 for `full`). Nothing overflowed.
