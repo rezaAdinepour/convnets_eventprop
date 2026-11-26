@@ -735,3 +735,15 @@ generalises worse rather than learning slower. Final activity is the same as for
 (conv1/conv2/conv3/hidden 42/51/71/90 against 40/53/77/94 spikes per neuron per gesture).
 Batch 16 does not change accuracy: -5.0 and +4.7 against `full` at batch 32 for seeds 1 and 2
 (`b16_seed2`, 132.2, is the best single run so far, within the seed spread).
+
+### Recurrent hidden layer (`configs/recurrent.json`)
+
+`recurrent_weight_sd > 0` (`--recurrent-weight-sd`) adds a learned all-to-all Dense
+connection `recurrent` from the hidden layer to itself (256 x 256 = 65,536 weights, against
+25.5k in the feedforward network), with the same synapse as the other spiking layers, as in
+mlGeNN's `examples/event_prop/shd.py`. The EventProp compiler handles it like any other
+connection; it adds no population, so no extra spike-time ring and no extra GPU memory of
+that kind. The runs keep the `full` setup at batch 32, so `full` seeds 1-3 (129.7, 127.5,
+127.4) are their controls. The initial sd is chosen from 2-epoch smoke runs of `rec_0.1`,
+`rec_0.3` and `rec_0.6` (seed 1) whose hidden activity and maximum spikes per neuron stay
+close to `full`'s (epoch 0: 128 mean; trained: 94 mean, 659 max).

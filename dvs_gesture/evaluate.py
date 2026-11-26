@@ -69,7 +69,8 @@ def main():
                             subtract_reset=config.get("subtract_reset", False),
                             readout=config.get("readout", "avg_var_exp_weight"),
                             input_channels=input_channels(
-                                config["encoding"], config.get("count_levels", COUNT_LEVELS)))
+                                config["encoding"], config.get("count_levels", COUNT_LEVELS)),
+                            recurrent_weight_sd=config.get("recurrent_weight_sd", 0.0))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
         # Training rounds the learned delays the same way (EventPropCompiler)

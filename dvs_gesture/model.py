@@ -1,4 +1,4 @@
-from ml_genn import InputLayer, Layer, SequentialNetwork
+from ml_genn import Connection, InputLayer, Layer, SequentialNetwork
 from ml_genn.compilers import EventPropCompiler, InferenceCompiler
 from ml_genn.connectivity import AvgPoolConv2D, Conv2D, Dense
 from ml_genn.initializers import Normal, Uniform
@@ -47,7 +47,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
                   downsample="pool", hidden=True, tau_mem_ms=TAU_MEM_MS, tau_syn_ms=TAU_SYN_MS,
                   spiking_weight_sd=SPIKING_WEIGHT_SD, channels=CHANNELS,
                   synapse="exponential", subtract_reset=False, readout="avg_var_exp_weight",
-                  input_channels=INPUT_SHAPE[2]):
+                  input_channels=INPUT_SHAPE[2], recurrent_weight_sd=0.0):
     """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
 
     ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
@@ -63,6 +63,8 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
     ``readout`` is the output readout: avg_var_exp_weight weights v by exp(-t / trial),
     so the end of the trial counts 37% of the start; avg_var weights all times equally.
     ``input_channels`` is the number of input channels per pixel (2K for K count levels).
+    ``recurrent_weight_sd > 0`` adds a learned all-to-all hidden -> hidden Dense connection
+    (``recurrent``) with initial weight sd ``recurrent_weight_sd``.
 
     Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
     and a delay buffer of ``max_delay_ms``.
@@ -116,8 +118,14 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
                                              flatten=True, **delay("hidden"))
             else:
                 connectivity = Dense(spiking_weights, **delay("hidden"))
-            Layer(connectivity, lif(), 256, synapse=spiking_synapse(), record_spikes=True,
-                  name="hidden", **layer_delay("hidden"))
+            hidden_layer = Layer(connectivity, lif(), 256, synapse=spiking_synapse(),
+                                 record_spikes=True, name="hidden", **layer_delay("hidden"))
+            if recurrent_weight_sd > 0:
+                Connection(hidden_layer.population(), hidden_layer.population(),
+                           Dense(Normal(mean=0.0, sd=recurrent_weight_sd)),
+                           spiking_synapse(), name="recurrent")
+        elif recurrent_weight_sd > 0:
+            raise ValueError("A recurrent connection needs the hidden layer")
         Layer(Dense(Normal(mean=0.0, sd=OUTPUT_WEIGHT_SD), **delay("output")),
               LeakyIntegrate(tau_mem=TAU_MEM_MS, readout=readout),
               NUM_CLASSES, synapse=Exponential(tau_syn_ms), name="output",

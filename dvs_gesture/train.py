@@ -272,6 +272,8 @@ def main():
                         help="Readout of the output layer")
     parser.add_argument("--spiking-weight-sd", type=float, default=SPIKING_WEIGHT_SD,
                         help="Initial weight sd of the spiking layers (scale with tau_mem)")
+    parser.add_argument("--recurrent-weight-sd", type=float, default=0.0,
+                        help="Initial weight sd of a hidden -> hidden connection (0: none)")
     parser.add_argument("--evd-tau-theta-ms", type=float, default=TAU_THETA_MS,
                         help="EvDownsampling adaptive-threshold time constant")
     parser.add_argument("--evd-tau-accumulator-ms", type=float, default=TAU_ACCUMULATOR_MS,
@@ -308,9 +310,11 @@ def main():
                      "--aug-zoom needs 0 < low <= high")
     args.channels = tuple(args.channels)
     if (args.output_lr_factor <= 0 or min(args.channels) < 1 or args.count_levels < 1
-            or args.batch_size < 1):
+            or args.batch_size < 1 or args.recurrent_weight_sd < 0):
         parser.error("--output-lr-factor must be > 0, --channels, --count-levels and "
-                     "--batch-size >= 1")
+                     "--batch-size >= 1, --recurrent-weight-sd >= 0")
+    if args.recurrent_weight_sd > 0 and args.no_hidden:
+        parser.error("--recurrent-weight-sd needs the hidden layer")
     augment = args.aug_shift_px > 0 or args.aug_rotate_deg > 0 or args.aug_zoom != (1.0, 1.0)
 
     np.random.seed(args.seed)
@@ -374,7 +378,8 @@ def main():
         warmup_epochs=args.warmup_epochs, downsample=args.downsample,
         hidden=not args.no_hidden, tau_mem_ms=args.tau_mem_ms, tau_syn_ms=args.tau_syn_ms,
         synapse=args.synapse, subtract_reset=args.subtract_reset, readout=args.readout,
-        spiking_weight_sd=args.spiking_weight_sd, evd_params=evd_params,
+        spiking_weight_sd=args.spiking_weight_sd, recurrent_weight_sd=args.recurrent_weight_sd,
+        evd_params=evd_params,
         aug_shift_px=args.aug_shift_px, aug_zoom=args.aug_zoom,
         aug_rotate_deg=args.aug_rotate_deg,
         config=config_path, run=args.run,
@@ -384,8 +389,10 @@ def main():
                             args.init_delay_ms, args.downsample, not args.no_hidden,
                             args.tau_mem_ms, args.tau_syn_ms, args.spiking_weight_sd,
                             args.channels, args.synapse, args.subtract_reset, args.readout,
-                            input_channels(args.encoding, args.count_levels))
+                            input_channels(args.encoding, args.count_levels),
+                            args.recurrent_weight_sd)
     print("Layers: " + ", ".join(f"{p.name} {p.shape}" for p in network.populations))
+    print("Connections: " + ", ".join(c.name for c in network.connections))
     input_pop, output_pop = network.populations[0], network.populations[-1]
     hidden_layers = network.populations[1:-1]
     compiled = compile_for_training(network, example_timesteps, args.grad_limit,

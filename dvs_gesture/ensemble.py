@@ -25,7 +25,8 @@ from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, b
 
 # Settings of older runs that train.py did not save yet
 DEFAULTS = dict(channels=list(CHANNELS), readout="avg_var_exp_weight", synapse="exponential",
-                subtract_reset=False, output_lr_factor=1.0, count_levels=COUNT_LEVELS)
+                subtract_reset=False, output_lr_factor=1.0, count_levels=COUNT_LEVELS,
+                recurrent_weight_sd=0.0)
 PER_RUN = ("seed", "run", "config")
 
 
@@ -100,7 +101,8 @@ def main():
                             channels=config["channels"], synapse=config["synapse"],
                             subtract_reset=config["subtract_reset"], readout=config["readout"],
                             input_channels=input_channels(
-                                config["encoding"], config.get("count_levels", COUNT_LEVELS)))
+                                config["encoding"], config.get("count_levels", COUNT_LEVELS)),
+                            recurrent_weight_sd=config["recurrent_weight_sd"])
     connections = [c.name for c in network.connections]
     input_pop, output_pop = network.populations[0], network.populations[-1]
     os.chdir(work_dir)
