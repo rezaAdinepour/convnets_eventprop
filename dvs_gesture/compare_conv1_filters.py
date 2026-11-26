@@ -1,9 +1,6 @@
-"""Plot our learned conv1 filters next to those of the Arfa et al. snnTorch checkpoint.
+"""Plot our conv1 filters next to the Arfa et al. checkpoint (read without PyTorch).
 
     python compare_conv1_filters.py RUN_DIR/train OUTPUT.png
-
-The checkpoint is read without PyTorch. Our filters are matched one-to-one to
-theirs by cosine similarity (filter order is arbitrary in both networks).
 """
 import argparse
 import collections
@@ -32,7 +29,7 @@ def _rebuild_tensor(storage, offset, size, stride, *args):
 
 
 class _Unpickler(pickle.Unpickler):
-    """Unpickle a PyTorch state_dict into NumPy arrays, allowing nothing else."""
+    # only lets tensors through
 
     def __init__(self, file, archive, prefix):
         super().__init__(file)
@@ -62,13 +59,11 @@ def load_state_dict(path):
 
 
 def reshape_conv_weight(weight):
-    # PyTorch (out, in, kh, kw) -> mlGeNN (kh, kw, in, out), as in ml_genn's
-    # sirine_dvs_gesture example
+    # (out, in, kh, kw) -> (kh, kw, in, out)
     return np.moveaxis(weight, (0, 1, 2, 3), (3, 2, 0, 1))
 
 
 def cosine(a, b):
-    """Cosine similarity of every filter in a (kh, kw, in, n) with every one in b."""
     a = a.reshape(-1, a.shape[-1])
     b = b.reshape(-1, b.shape[-1])
     a = a / np.linalg.norm(a, axis=0)
@@ -104,11 +99,10 @@ def draw(axes, w, title, order):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("run_dir", type=Path, help="A training run's train/ directory")
-    parser.add_argument("output", type=Path, help="New PNG file for the figure")
+    parser.add_argument("run_dir", type=Path)
+    parser.add_argument("output", type=Path)
     parser.add_argument("--epoch", type=int, default=None, help="Default: the last epoch")
-    parser.add_argument("--reference", type=Path, default=REFERENCE,
-                        help="snnTorch checkpoint (.pth) of Arfa et al.")
+    parser.add_argument("--reference", type=Path, default=REFERENCE)
     args = parser.parse_args()
     if args.output.exists():
         parser.error(f"{args.output} exists")
@@ -143,9 +137,7 @@ def main():
     draw(axes[0:2], theirs, "theirs", range(theirs.shape[-1]))
     for i, (name, w, order) in enumerate(rows, start=1):
         draw(axes[2 * i:2 * i + 2], w, name, order)
-    fig.suptitle("conv1 filters (each scaled to its own max |w|; red +, blue -). "
-                 "Our filters are reordered to match theirs; numbers are filter indices.",
-                 fontsize=9)
+    fig.suptitle("Conv1 filters")
     fig.tight_layout()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.output, dpi=150)

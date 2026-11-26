@@ -26,10 +26,7 @@ GRAD_LIMIT = 100.0
 REG_TARGET = 100.0
 REG_STRENGTH = (1e-10, 1e-10)
 
-# Learnable delays (layer names whose incoming connection learns them).
-# With kernel connectivity (Toeplitz or procedural, i.e. every layer but the
-# Dense output) GeNN 5.5.0 fails in _create_backend with
-# "vector::_M_range_check: __n (which is 0) >= this->size() (which is 0)".
+# delays only work on the dense output for now (GeNN 5.5.0 fails on conv kernels)
 LAYER_NAMES = ("output",)
 MAX_DELAY_MS = 150.0
 INIT_DELAY_MS = 50.0
@@ -48,32 +45,6 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
                   spiking_weight_sd=SPIKING_WEIGHT_SD, channels=CHANNELS,
                   synapse="exponential", subtract_reset=False, readout="avg_var_exp_weight",
                   input_channels=INPUT_SHAPE[2], recurrent_weight_sd=0.0):
-    """Create the network. ``max_input_spikes_per_batch`` sizes the input buffer.
-
-    ``tau_mem_ms`` applies to the spiking layers (the output readout keeps
-    ``TAU_MEM_MS``), ``tau_syn_ms`` to every synapse. An input spike moves v by
-    about weight * tau_syn / tau_mem, so a longer tau_mem needs a proportionally
-    larger ``spiking_weight_sd`` (initial weight sd of the spiking layers) to
-    start with the same activity. ``channels`` are the filters of conv1, conv2 and conv3.
-
-    ``synapse="delta"`` makes the synapses into the spiking layers delta synapses
-    (the input is injected for one step, so a spike moves v by
-    weight * (1 - exp(-dt / tau_mem))); the output keeps the exponential synapse.
-    ``subtract_reset`` subtracts the threshold after a spike instead of resetting v to 0.
-    ``readout`` is the output readout: avg_var_exp_weight weights v by exp(-t / trial),
-    so the end of the trial counts 37% of the start; avg_var weights all times equally.
-    ``input_channels`` is the number of input channels per pixel (2K for K count levels).
-    ``recurrent_weight_sd > 0`` adds a learned all-to-all hidden -> hidden Dense connection
-    (``recurrent``) with initial weight sd ``recurrent_weight_sd``.
-
-    Connections into ``delay_layers`` get delays drawn from U(0, init_delay_ms)
-    and a delay buffer of ``max_delay_ms``.
-
-    ``downsample="stride"`` replaces the two 2x2 sum-pools: conv3 becomes a
-    stride-2 valid 3x3 convolution (15x15 -> 7x7x8) and the hidden layer a Dense
-    392 -> 256. ``"conv3-stride"`` strides conv3 only and keeps the pooled hidden
-    layer. ``hidden=False`` drops the hidden layer (conv3 -> output).
-    """
     def lif():
         return LeakyIntegrateFire(v_thresh=1.0, tau_mem=tau_mem_ms,
                                   relative_reset=subtract_reset)
@@ -82,8 +53,7 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
         return Delta() if synapse == "delta" else Exponential(tau_syn_ms)
 
     def delay(name):
-        # A constant delay would make mlGeNN skip the delayed adjoint lookup,
-        # so the initial delays must be random (init_delay_ms > 0).
+        # must not be constant, otherwise mlGeNN skips the delayed adjoints
         if name not in delay_layers:
             return {}
         return dict(delay=Uniform(0.0, init_delay_ms / BIN_MS))
@@ -134,7 +104,6 @@ def build_network(max_input_spikes_per_batch, delay_layers=(),
 
 
 def delay_connections(network):
-    """Connections built with a delay buffer, i.e. those that learn delays."""
     return [c for c in network.connections if c.max_delay_steps is not None]
 
 
@@ -143,15 +112,9 @@ def compile_for_training(network, example_timesteps, grad_limit=GRAD_LIMIT,
                          delay_learning_rate=DELAY_LEARNING_RATE,
                          learning_rate=LEARNING_RATE, output_lr_factor=1.0,
                          batch_size=BATCH_SIZE):
-    """``output_lr_factor`` scales the weight learning rate of the output connection.
-
-    EventProp keeps a spike-time ring of batch_size x neurons x MAX_SPIKES float32 per
-    population (input included), so the GPU memory grows with ``batch_size``.
-    """
     regulariser = SpikeCount(strength=reg_strength, target=reg_target)
     compiler = EventPropCompiler(
         example_timesteps=example_timesteps,
-
         losses=SparseCategoricalCrossentropy(record_key="loss"),
         dt=BIN_MS, batch_size=batch_size, max_spikes=MAX_SPIKES,
         strict_buffer_checking=True, grad_limit=grad_limit, rng_seed=seed)

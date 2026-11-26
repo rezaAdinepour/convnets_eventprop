@@ -1,9 +1,6 @@
-"""Train every run of a sweep config one after another, each with run.sh.
+"""Train the runs of a sweep config one after another (all, or the ones named).
 
-    python3 sweep.py configs/sweep_stage_h.json                 # all runs
-    python3 sweep.py configs/sweep_stage_h.json grad_100 lr_1e-2  # only these
-
-A failed run is reported and the sweep continues with the next one.
+    python3 sweep.py configs/sweep_stage_h.json [RUN ...]
 """
 import argparse
 import json
@@ -16,8 +13,8 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("config", type=Path, help="Config with a \"runs\" section")
-    parser.add_argument("runs", nargs="*", help="Run names to train (default: all)")
+    parser.add_argument("config", type=Path)
+    parser.add_argument("runs", nargs="*")
     args = parser.parse_args()
 
     config = args.config.resolve()

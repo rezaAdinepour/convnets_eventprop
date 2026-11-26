@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Train in a new, uniquely named experiment directory and keep the log there.
-# Extra arguments go to train.py, e.g.
-#   ./run.sh --config configs/base.json
-#   ./run.sh --config configs/base.json --epochs 5
-# RUN_TAG=name appends _name to the directory name (sweep.py sets it to the run name).
+# usage: ./run.sh --config configs/base.json [train.py options]
+# RUN_TAG=name adds _name to the run directory
 set -euo pipefail
 cd "$(dirname "$0")"
 

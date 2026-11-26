@@ -15,8 +15,7 @@ VALIDATION_SUBJECTS = (21, 22, 23)
 NUM_CLASSES = 11
 BIN_MS = 1
 
-# 128x128 sensor -> 32x32 after 4x spatial downsampling, plus a one-pixel
-# silent border on each side -> 34x34 input with ON/OFF channels.
+# 128x128 -> 32x32, plus a silent 1 px border
 SENSOR_SIZE = 128
 SPATIAL_FACTOR = 4
 BORDER = 1
@@ -31,7 +30,7 @@ COUNT_LEVELS = 4
 def input_channels(encoding, count_levels=COUNT_LEVELS):
     return 2 * count_levels if encoding == "counts" else 2
 
-# EvDownsampling parameters from the authors' test_script_genn.py
+# from the authors' test_script_genn.py
 EVDOWNSAMPLING_REPO = Path(os.environ.get(
     "EVDOWNSAMPLING_REPO", Path(__file__).resolve().parents[2] / "EvDownsampling"))
 TAU_THETA_MS = 420.0
@@ -41,7 +40,6 @@ EVDOWNSAMPLING_PARAMS = (TAU_THETA_MS, TAU_ACCUMULATOR_MS, BETA)
 
 
 def load_dataset(data_root: Path, train: bool):
-    """Open an already-extracted official partition, without downloading."""
     folder = data_root / "DVSGesture" / ("ibmGestureTrain" if train else "ibmGestureTest")
     if not folder.is_dir():
         raise FileNotFoundError(f"{folder} not found; this script never downloads data")
@@ -49,7 +47,6 @@ def load_dataset(data_root: Path, train: bool):
 
 
 def split_train_validation(dataset, subjects=VALIDATION_SUBJECTS):
-    """Return training and validation (recordings of ``subjects``) indices, sorted by file path."""
     missing = set(subjects) - set(dataset.users)
     if missing:
         raise ValueError(f"No training recordings of subjects {sorted(missing)}")
@@ -60,10 +57,6 @@ def split_train_validation(dataset, subjects=VALIDATION_SUBJECTS):
 
 
 def create_downsampler(build_dir, evd_params=EVDOWNSAMPLING_PARAMS):
-    """Build the authors' real-time GeNN EvDownsampling model in build_dir.
-
-    evd_params is (tau_theta in ms, tau_accumulator in ms, beta).
-    """
     if str(EVDOWNSAMPLING_REPO) not in sys.path:
         sys.path.append(str(EVDOWNSAMPLING_REPO))
     from event_downsampling_genn import EventDownsampleGeNN
@@ -169,7 +162,6 @@ def encode_counts(events, levels):
 
 
 def count_level_spikes(spikes, levels):
-    """Input spikes per count level, summed over recordings, pixels and polarities."""
     total = sum(np.diff(s.end_spikes, prepend=0) for s in spikes)
     return total.reshape(-1, levels).sum(axis=0)
 
@@ -182,15 +174,6 @@ def crop_events(events, crop_ms):
 def encode_recordings(dataset, indices, encoding, description="Encoding", trial_ms=None,
                       cache_dir=None, crop_ms=None, evd_params=EVDOWNSAMPLING_PARAMS,
                       count_levels=COUNT_LEVELS):
-    """Encode the given recordings; return spikes, labels and lengths in bins.
-
-    crop_ms keeps only the first crop_ms ms of each recording in real time
-    (instead of compressing it with trial_ms). evd_params are the EvDownsampling
-    parameters, see create_downsampler; count_levels the levels of encode_counts.
-
-    With cache_dir, the result is stored there and reused by later calls with
-    the same recordings, encoding, trial_ms, crop_ms, evd_params and encoder code.
-    """
     if trial_ms is not None and crop_ms is not None:
         raise ValueError("Use either trial_ms or crop_ms, not both")
     if encoding == "counts" and trial_ms is not None:
@@ -233,7 +216,6 @@ def encode_recordings(dataset, indices, encoding, description="Encoding", trial_
 
 
 def _cache_key(dataset, indices, encoding, trial_ms, crop_ms, evd_params, count_levels):
-    """Hash of everything that determines the encoded spikes."""
     key = hashlib.sha256()
     key.update(repr((encoding, trial_ms, DENOISE_US, SPATIAL_FACTOR, BORDER, INPUT_SHAPE,
                      [str(dataset.data[i]) for i in indices])).encode())
@@ -271,19 +253,11 @@ def _load_cache(cache_file):
 
 
 def max_spikes_per_neuron(spikes):
-    """Largest number of spikes any single input neuron emits in one recording."""
     return max(int(np.diff(s.end_spikes, prepend=0).max()) for s in spikes)
 
 
 def augment_spikes(spikes, rng, shift_px=0.0, zoom=(1.0, 1.0), rotate_deg=0.0):
-    """Randomly shift, zoom and rotate each recording on the input grid.
-
-    One draw per recording: shift uniform in +-shift_px pixels per axis, zoom
-    factor uniform in zoom, rotation uniform in +-rotate_deg degrees about the
-    centre. Each input neuron copies the spike train of the nearest source pixel
-    (same channel), so no neuron fires more often than before; the border stays
-    silent. Pixels pulled from outside the sensor are silent.
-    """
+    # nearest source pixel, so no neuron fires more often than before
     width, height, _ = INPUT_SHAPE
     channels = len(spikes[0].end_spikes) // (width * height)
     inner = SENSOR_SIZE // SPATIAL_FACTOR
@@ -318,5 +292,4 @@ def augment_spikes(spikes, rng, shift_px=0.0, zoom=(1.0, 1.0), rotate_deg=0.0):
 
 
 def augmentation_growth(zoom, rotate_deg):
-    """Bound on how many input pixels can copy one source pixel."""
     return 1 if zoom[1] <= 1.0 and rotate_deg == 0.0 else 4

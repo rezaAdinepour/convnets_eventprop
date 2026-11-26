@@ -1,11 +1,8 @@
-"""Spike activity per layer over training, from a run's checkpoints (never the test set).
+"""Spike rate per layer at each saved epoch of a run (validation set by default).
 
     python activity_over_training.py DATA_ROOT RUN_DIR WORK_DIR [--split validation train]
 
-For each epoch in --epochs (-1: the initial weights) this loads the checkpoint, runs
-inference without augmentation on the chosen split(s) and records every hidden neuron's
-spike count. WORK_DIR/activity.csv holds the mean, sd and percentiles across neurons of
-the per-neuron mean count (see activity.py); WORK_DIR/activity.png plots them in Hz.
+Epoch -1 is the initial weights.
 """
 import argparse
 import json
@@ -30,9 +27,9 @@ EPOCHS = [-1, 0, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 99]
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
-    parser.add_argument("run_dir", type=Path, help="A training run's train/ directory")
-    parser.add_argument("work_dir", type=Path, help="New directory for the outputs")
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("run_dir", type=Path)
+    parser.add_argument("work_dir", type=Path)
     parser.add_argument("--split", nargs="+", choices=("validation", "train"),
                         default=["validation"])
     parser.add_argument("--epochs", type=int, nargs="+", default=EPOCHS)

@@ -25,9 +25,9 @@ def best_epoch(run_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
-    parser.add_argument("run_dir", type=Path, help="Directory written by train.py")
-    parser.add_argument("--test", action="store_true", help="Evaluate the official test set")
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("run_dir", type=Path)
+    parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
 
     run_dir = args.run_dir.resolve()
@@ -73,7 +73,7 @@ def main():
                             recurrent_weight_sd=config.get("recurrent_weight_sd", 0.0))
     network.load((epoch,), Numpy(str(run_dir / "checkpoints")))
     for connection in delay_connections(network):
-        # Training rounds the learned delays the same way (EventPropCompiler)
+        # same rounding as in training
         connection.connectivity.delay = np.clip(np.round(connection.connectivity.delay),
                                                 0, connection.max_delay_steps)
     os.chdir(run_dir)

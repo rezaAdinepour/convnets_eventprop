@@ -1,10 +1,4 @@
-"""Validation accuracy per class and subject of single runs, their weight averages and ensembles.
-
-All runs must share the model and data settings (they may differ in seed). For every run
-this evaluates the weights of ``--epoch`` (default: the last epoch) and, with
-``--swa-epochs N``, the mean of the weights of the last N epochs up to ``--epoch``.
-The ensembles average the softmax of the readouts of the runs. Only the validation
-subjects are evaluated; the readouts are saved to ``<work_dir>/readouts.npz``.
+"""Validation accuracy of single runs, their weight averages (SWA) and seed ensembles.
 
     python ensemble.py DATA_ROOT WORK_DIR RUN_DIR [RUN_DIR ...]
 """
@@ -23,7 +17,7 @@ from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, VALIDATION_SUBJECTS, enco
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
                    compile_for_inference)
 
-# Settings of older runs that train.py did not save yet
+# for older runs that did not save these
 DEFAULTS = dict(channels=list(CHANNELS), readout="avg_var_exp_weight", synapse="exponential",
                 subtract_reset=False, output_lr_factor=1.0, count_levels=COUNT_LEVELS,
                 recurrent_weight_sd=0.0, val_subjects=list(VALIDATION_SUBJECTS))
@@ -58,12 +52,12 @@ def softmax(readout):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
-    parser.add_argument("work_dir", type=Path, help="New directory for the inference model")
-    parser.add_argument("run_dirs", type=Path, nargs="+", help="Directories written by train.py")
-    parser.add_argument("--epoch", type=int, help="Epoch to evaluate (default: the last)")
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("work_dir", type=Path)
+    parser.add_argument("run_dirs", type=Path, nargs="+")
+    parser.add_argument("--epoch", type=int, help="default: last epoch")
     parser.add_argument("--swa-epochs", type=int, default=20,
-                        help="Also average the weights of this many epochs (0: off)")
+                        help="0: no SWA")
     args = parser.parse_args()
 
     run_dirs = [d.resolve() / "train" if (d / "train" / "run_config.json").exists()
@@ -92,7 +86,7 @@ def main():
                                 count_levels=config.get("count_levels", COUNT_LEVELS))
     subjects = np.array([dataset.users[i] for i in indices])
 
-    # One network for all models: a second build would rename its layers (conv1_1, ...)
+    # build once, a second build renames the layers
     network = build_network(BATCH_SIZE * calc_max_spikes(x), (), MAX_DELAY_MS,
                             downsample=config.get("downsample", "pool"),
                             hidden=config.get("hidden", True),

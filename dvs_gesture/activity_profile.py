@@ -1,10 +1,4 @@
-"""Event histogram of every training and validation recording (never the test set).
-
-For each recording (after the same denoising as data.py), events are counted in
-bins of --bin-ms. A bin is active when it has at least FRACTION of the busiest
-bin's events; the leading and trailing inactive stretches are what trimming
-would remove. Writes a CSV per recording, a summary, and a plot of the first
-training recording of each class.
+"""Events per bin of every training and validation recording, and the silent lead and tail.
 """
 import argparse
 import csv
@@ -29,8 +23,8 @@ def active_range(counts, fraction):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
-    parser.add_argument("output_dir", type=Path, help="New directory for the outputs")
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("output_dir", type=Path)
     parser.add_argument("--bin-ms", type=int, default=500)
     parser.add_argument("--fractions", type=float, nargs="+", default=[0.05, 0.1, 0.2])
     args = parser.parse_args()

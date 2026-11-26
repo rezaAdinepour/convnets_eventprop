@@ -1,10 +1,6 @@
-"""ON vs OFF balance of the EvDownsampling input and of the raw events (train and validation only).
+"""ON vs OFF balance of the raw events and of the EvDownsampling input (from the cache).
 
     python polarity_balance.py DATA_ROOT --cache-dir CACHE_DIR
-
-The EvDownsampling spikes come from the encoding cache that training uses (same
-crop and parameters), so nothing is re-encoded. The raw events are counted after
-the same crop and denoising, before any downsampling.
 """
 import argparse
 from pathlib import Path
@@ -36,9 +32,8 @@ def report(name, on, off, labels):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
-    parser.add_argument("--cache-dir", type=Path, required=True,
-                        help="Encoding cache used for training")
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--crop-ms", type=int, default=4000)
     parser.add_argument("--evd-params", type=float, nargs=3, default=EVDOWNSAMPLING_PARAMS,
                         metavar=("TAU_THETA", "TAU_ACC", "BETA"))
@@ -51,7 +46,7 @@ def main():
                                               f"Loading {split}", None,
                                               args.cache_dir.resolve(), args.crop_ms,
                                               args.evd_params)
-        # Input neuron id = p + 2 * x + 2 * width * y, so even ids are OFF, odd are ON
+        # even ids are OFF, odd are ON
         counts = [np.diff(s.end_spikes, prepend=0) for s in spikes]
         evd_on = np.array([c[1::2].sum() for c in counts])
         evd_off = np.array([c[0::2].sum() for c in counts])

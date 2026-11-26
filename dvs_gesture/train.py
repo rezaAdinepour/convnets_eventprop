@@ -26,11 +26,7 @@ LR_SCHEDULES = ("constant", "cosine")
 
 
 def load_config(path, run=None):
-    """Read a JSON config of settings named like train.py's options (grad_limit, ...).
-
-    "base" names another config, relative to this one, whose settings this one
-    overrides. "runs" maps run names to the settings that each run changes.
-    """
+    # "base": config this one overrides, "runs": per-run overrides
     config = json.loads(path.read_text())
     base, runs = config.pop("base", None), config.pop("runs", None)
     if base is not None:
@@ -45,7 +41,6 @@ def load_config(path, run=None):
 
 
 def apply_config(parser, config):
-    """Make the config's settings the defaults, so command-line options still override them."""
     actions = {action.dest: action for action in parser._actions if action.option_strings}
     for key, value in config.items():
         action = actions.get(key)
@@ -60,7 +55,6 @@ def apply_config(parser, config):
 
 
 def lr_factor(epoch, schedule, epochs, warmup_epochs):
-    """Learning rate of ``epoch`` relative to the initial one."""
     if epoch < warmup_epochs:
         return (epoch + 1) / warmup_epochs
     if schedule == "cosine":
@@ -69,7 +63,7 @@ def lr_factor(epoch, schedule, epochs, warmup_epochs):
 
 
 def lr_schedule(schedule, epochs, warmup_epochs):
-    # Rescale each optimiser's current alpha, so weight and delay rates keep their ratio.
+    # keeps the weight/delay lr ratio
     def func(epoch, alpha):
         previous = lr_factor(epoch - 1, schedule, epochs, warmup_epochs) if epoch > 0 else 1.0
         return alpha * lr_factor(epoch, schedule, epochs, warmup_epochs) / previous
@@ -77,8 +71,6 @@ def lr_schedule(schedule, epochs, warmup_epochs):
 
 
 class CSVLog:
-    """Create a CSV file with a header, then append one row per call."""
-
     def __init__(self, filename, fieldnames):
         self.filename = filename
         self.fieldnames = fieldnames
@@ -91,8 +83,6 @@ class CSVLog:
 
 
 class AdjointLimitLog(Callback):
-    """Log LambdavLimit and the fraction of neurons whose lambda_V stayed zero."""
-
     def __init__(self, log, hidden_layers):
         self.log = log
         self.hidden_layers = hidden_layers
@@ -105,8 +95,7 @@ class AdjointLimitLog(Callback):
         return compiled_network
 
     def on_batch_end(self, compiled_network, batch, metrics):
-        # LambdavAbsSum = sum over the previous batch's backward pass of |lambda_V|
-        # (reset at batch begin); batch 0 is skipped, as by mlGeNN's limit update.
+        # batch 0 has no backward pass yet
         if batch == 0:
             return
         for i, pop in enumerate(self.pops):
@@ -116,7 +105,7 @@ class AdjointLimitLog(Callback):
         self.batches += 1
 
     def on_epoch_end(self, compiled_network, epoch, metrics):
-        # A limit of exactly 0 clamps every later jump to 0, so it never recovers.
+        # a zero limit never recovers
         self.blocked = []
         for layer, pop, zero in zip(self.hidden_layers, self.pops, self.zero):
             limit = pop.vars["LambdavLimit"]
@@ -129,8 +118,6 @@ class AdjointLimitLog(Callback):
 
 
 class BackwardLimitRecorder(Callback):
-    """Store each layer's LambdavLimit used during batch 1."""
-
     def __init__(self, hidden_layers):
         self.hidden_layers = hidden_layers
         self.limits = {}
@@ -147,8 +134,6 @@ class BackwardLimitRecorder(Callback):
 
 
 class DelayLog(Callback):
-    """Log the distribution of each learnable-delay connection's delays (timesteps)."""
-
     def __init__(self, log, connections):
         self.log = log
         self.connections = connections
@@ -169,8 +154,7 @@ class DelayLog(Callback):
 
 
 def lambda_recorders(layers, batch_size):
-    # Batch 1 runs the backward pass of batch 0, so lane 0 of batch 1
-    # holds lambda_V of the first training example of the epoch.
+    # lane 0 of batch 1 is the backward pass of the first example
     return [VarRecorder(layer, "Lambdav", key=("lambda", layer.name),
                         example_filter=[batch_size]) for layer in layers]
 
@@ -191,7 +175,7 @@ def log_lambda_trace(log, epoch, data, limits, layers):
 
 
 def spike_recorders(layers, split, num_examples):
-    # example_filter excludes the unused batch lanes of the last, partial batch.
+    # skip the padding of the last batch
     return [SpikeRecorder(layer, key=(split, layer.name), record_counts=True,
                           example_filter=np.arange(num_examples))
             for layer in layers]
@@ -206,88 +190,55 @@ def log_spike_counts(log, epoch, split, recordings, layers):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("data_root", type=Path, help="Directory that contains DVSGesture/")
-    parser.add_argument("run_dir", type=Path, help="New directory for this run's outputs")
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("run_dir", type=Path)
     parser.add_argument("--config", type=Path, default=None,
-                        help="JSON file of settings (see load_config); options given here "
-                             "override it")
-    parser.add_argument("--run", default=None, help="Run name from the config's runs")
+                        help="JSON settings; command-line options override them")
+    parser.add_argument("--run", default=None)
     parser.add_argument("--encoding", choices=ENCODINGS, default="occupancy")
-    parser.add_argument("--count-levels", type=int, default=COUNT_LEVELS,
-                        help="counts encoding: channels per polarity (count >= 1, ..., >= this)")
+    parser.add_argument("--count-levels", type=int, default=COUNT_LEVELS)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE,
-                        help="Training batch size (GPU memory grows with it)")
-    parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT,
-                        help="EventProp adjoint limit multiplier (default: mlGeNN's 100)")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--grad-limit", type=float, default=GRAD_LIMIT)
     parser.add_argument("--reg-target", type=float, default=REG_TARGET,
-                        help="SpikeCount target spikes per hidden neuron per gesture")
+                        help="spikes per neuron per trial")
     parser.add_argument("--reg-strength", type=float, nargs=2, default=REG_STRENGTH,
-                        metavar=("BELOW", "ABOVE"),
-                        help="SpikeCount strength below and above the target")
+                        metavar=("BELOW", "ABOVE"))
     length = parser.add_mutually_exclusive_group()
     length.add_argument("--trial-ms", type=int, default=None,
-                        help="Compress every recording into this many ms (default: real time)")
+                        help="compress each recording to this length")
     length.add_argument("--crop-ms", type=int, default=None,
-                        help="Keep only the first this many ms of every recording, in real time")
-    parser.add_argument("--cache-dir", type=Path, default=None,
-                        help="Reuse encoded recordings stored in this directory")
-    parser.add_argument("--seed", type=int, default=SEED,
-                        help="Seed for weight initialisation and shuffling (must not be 0)")
-    parser.add_argument("--train-all", action="store_true",
-                        help="Train on all official training subjects, without validation")
-    parser.add_argument("--val-subjects", type=int, nargs="+", default=list(VALIDATION_SUBJECTS),
-                        help="Training subjects held out for validation")
-    parser.add_argument("--lambda-epochs", type=int, nargs="*", default=[],
-                        help="Epochs at which to record lambda_V of one training example")
-    parser.add_argument("--delay-layers", nargs="*", choices=LAYER_NAMES, default=[],
-                        help="Layers whose incoming connection learns delays")
+                        help="keep only the first N ms")
+    parser.add_argument("--cache-dir", type=Path, default=None)
+    parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--train-all", action="store_true", help="no validation split")
+    parser.add_argument("--val-subjects", type=int, nargs="+", default=list(VALIDATION_SUBJECTS))
+    parser.add_argument("--lambda-epochs", type=int, nargs="*", default=[])
+    parser.add_argument("--delay-layers", nargs="*", choices=LAYER_NAMES, default=[])
     parser.add_argument("--max-delay-ms", type=float, default=MAX_DELAY_MS)
-    parser.add_argument("--init-delay-ms", type=float, default=INIT_DELAY_MS,
-                        help="Initial delays are drawn from U(0, this)")
-    parser.add_argument("--delay-lr", type=float, default=DELAY_LEARNING_RATE,
-                        help="Adam learning rate for delays (in timesteps)")
-    parser.add_argument("--lr", type=float, default=LEARNING_RATE,
-                        help="Initial (after warm-up: peak) Adam learning rate for weights")
-    parser.add_argument("--output-lr-factor", type=float, default=1.0,
-                        help="Scale the weight learning rate of the output layer by this")
+    parser.add_argument("--init-delay-ms", type=float, default=INIT_DELAY_MS)
+    parser.add_argument("--delay-lr", type=float, default=DELAY_LEARNING_RATE)
+    parser.add_argument("--lr", type=float, default=LEARNING_RATE)
+    parser.add_argument("--output-lr-factor", type=float, default=1.0)
     parser.add_argument("--channels", type=int, nargs=3, default=CHANNELS,
-                        metavar=("CONV1", "CONV2", "CONV3"), help="Filters of the conv layers")
-    parser.add_argument("--lr-schedule", choices=LR_SCHEDULES, default="constant",
-                        help="cosine decays every learning rate towards 0 at --epochs")
-    parser.add_argument("--warmup-epochs", type=int, default=0,
-                        help="Ramp the learning rates up linearly over this many epochs")
-    parser.add_argument("--downsample", choices=DOWNSAMPLING, default="pool",
-                        help="stride: stride-2 conv3 and a Dense hidden layer, no pooling; "
-                             "conv3-stride: stride-2 conv3, pooled hidden layer")
-    parser.add_argument("--no-hidden", action="store_true",
-                        help="Drop the 256-neuron hidden layer (conv3 -> output)")
-    parser.add_argument("--tau-mem-ms", type=float, default=TAU_MEM_MS,
-                        help="Membrane time constant of the spiking layers")
-    parser.add_argument("--tau-syn-ms", type=float, default=TAU_SYN_MS,
-                        help="Synaptic time constant")
-    parser.add_argument("--synapse", choices=SYNAPSES, default="exponential",
-                        help="Synapse model of the spiking layers")
-    parser.add_argument("--subtract-reset", action="store_true",
-                        help="Subtract the threshold after a spike instead of resetting v to 0")
-    parser.add_argument("--readout", choices=READOUTS, default="avg_var_exp_weight",
-                        help="Readout of the output layer")
-    parser.add_argument("--spiking-weight-sd", type=float, default=SPIKING_WEIGHT_SD,
-                        help="Initial weight sd of the spiking layers (scale with tau_mem)")
-    parser.add_argument("--recurrent-weight-sd", type=float, default=0.0,
-                        help="Initial weight sd of a hidden -> hidden connection (0: none)")
-    parser.add_argument("--evd-tau-theta-ms", type=float, default=TAU_THETA_MS,
-                        help="EvDownsampling adaptive-threshold time constant")
-    parser.add_argument("--evd-tau-accumulator-ms", type=float, default=TAU_ACCUMULATOR_MS,
-                        help="EvDownsampling accumulator time constant")
-    parser.add_argument("--evd-beta", type=float, default=BETA,
-                        help="EvDownsampling threshold adaptation scale")
-    parser.add_argument("--aug-shift-px", type=float, default=0.0,
-                        help="Shift each training recording by up to this many input pixels")
-    parser.add_argument("--aug-zoom", type=float, nargs=2, default=(1.0, 1.0),
-                        help="Range of the random zoom factor of the training recordings")
-    parser.add_argument("--aug-rotate-deg", type=float, default=0.0,
-                        help="Rotate each training recording by up to this many degrees")
+                        metavar=("CONV1", "CONV2", "CONV3"))
+    parser.add_argument("--lr-schedule", choices=LR_SCHEDULES, default="constant")
+    parser.add_argument("--warmup-epochs", type=int, default=0)
+    parser.add_argument("--downsample", choices=DOWNSAMPLING, default="pool")
+    parser.add_argument("--no-hidden", action="store_true")
+    parser.add_argument("--tau-mem-ms", type=float, default=TAU_MEM_MS)
+    parser.add_argument("--tau-syn-ms", type=float, default=TAU_SYN_MS)
+    parser.add_argument("--synapse", choices=SYNAPSES, default="exponential")
+    parser.add_argument("--subtract-reset", action="store_true")
+    parser.add_argument("--readout", choices=READOUTS, default="avg_var_exp_weight")
+    parser.add_argument("--spiking-weight-sd", type=float, default=SPIKING_WEIGHT_SD)
+    parser.add_argument("--recurrent-weight-sd", type=float, default=0.0, help="0: none")
+    parser.add_argument("--evd-tau-theta-ms", type=float, default=TAU_THETA_MS)
+    parser.add_argument("--evd-tau-accumulator-ms", type=float, default=TAU_ACCUMULATOR_MS)
+    parser.add_argument("--evd-beta", type=float, default=BETA)
+    parser.add_argument("--aug-shift-px", type=float, default=0.0)
+    parser.add_argument("--aug-zoom", type=float, nargs=2, default=(1.0, 1.0))
+    parser.add_argument("--aug-rotate-deg", type=float, default=0.0)
 
     known, _ = parser.parse_known_args()
     if known.config is not None:
