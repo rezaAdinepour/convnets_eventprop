@@ -779,8 +779,43 @@ per session and class), but small and easy:
 * Every earlier choice was made on these 143 recordings, so their accuracy is optimistic.
 
 Fold 2 (subjects 1-3, chosen before any result as the first three subjects, mirroring the
-last three) adds 3 subjects and 154 recordings, so that both folds together hold 6 subjects
-and 297 recordings, about the size of the test set (264). `full_fold2_seed1/2` are its
+last three) adds 3 subjects and 153 recordings, so that both folds together hold 6 subjects
+and 296 recordings, about the size of the test set (264). `full_fold2_seed1/2` are its
 controls. From now on an idea is accepted when its mean paired gain over fold 1 (seeds 1, 2)
 and fold 2 (seed 1, and seed 2 when it is close) is at least +2 recordings per fold, i.e.
 about 1.4 points. Fold 2 needs a new encoding cache (the cache key holds the recordings).
+
+Fold 2 controls (`20261126_132732_full_fold2_seed1`, `..._151001_full_fold2_seed2`; training
+on 924 recordings), last-20-epoch mean validation against fold 1:
+
+| Run | Fold 1 (of 143) | Fold 2 (of 153) |
+|---|---|---|
+| `full` seed 1 | 129.7 (90.7%) | 133.7 (87.4%) |
+| `full` seed 2 | 127.5 (89.2%) | 130.2 (85.1%) |
+
+Fold 2 is harder than fold 1 (about 4 points lower), so fold 1 is not unusually hard;
+both stay above the 84.2% test accuracy of `full_200`. Validation hidden activity is
+higher on fold 2 (114-120 against 94 spikes per neuron at epoch 99, train 97 on both),
+so subjects 1-3 differ from the training subjects more than 21-23 do.
+
+### Recurrent hidden layer: results
+
+Last-20-epoch mean validation (fold 1, of 143), paired with `full` of the same seed:
+
+| Seed | `full` | `rec_0.3` | Gain | Final train (of 934) |
+|---|---|---|---|---|
+| 1 | 129.7 | 126.8 | -2.9 | 688 -> 732 |
+| 2 | 127.5 | 127.2 | -0.3 | 707 -> 733 |
+| Mean | | | **-1.6** | |
+
+The recurrent connection fits the training set better (+35 train recordings) but validates
+worse, so it is rejected (the rule needs +2). After epoch 2 its hidden activity is the same as
+`full`'s (97 mean per neuron); only the epoch-0 maximum grows (seed 1: 3846 against 2304).
+
+`rec_0.3_fold2_seed1` crashed in epoch 0 (batch 17) with a hidden ring buffer violation in
+neuron 105. The EventProp ring of each neuron holds the spikes of the trial being read
+backwards and of the trial being written (`event_prop_compiler.py`, `neuron_reset` and
+`neuron_reset_strict_check`), so two consecutive trials of one batch slot must not exceed
+`MAX_SPIKES` (6242) together; here the previous trial had 3700 spikes (offsets 4198 -> 1656)
+and the current one 2542 by t = 3975 ms. The run was not repeated, since fold 1 already
+rejects the idea: with fold 1 at -1.6, fold 2 would need a gain of +5.6 to reach a mean of +2.
