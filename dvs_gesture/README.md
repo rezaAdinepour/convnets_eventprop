@@ -20,6 +20,10 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 | `ensemble.py` | Validation only: per class and subject accuracy of several runs (e.g. seeds) at one epoch, of their weights averaged over the last epochs (SWA), and of the ensembles that average their softmax outputs |
 | `plot_training.py` | Plot validation accuracy and training loss of one or more runs |
 | `compare_conv1_filters.py` | Plot a run's conv1 filters next to those of the Arfa et al. snnTorch checkpoint (read without PyTorch), matched one-to-one by cosine similarity |
+| `conv1_similarity.py` | conv1 filters of several runs against the Arfa et al. checkpoint, each other (seed vs seed) and chance (random Gaussian banks), by matched cosine similarity; no GPU |
+| `weight_change.py` | Per layer and epoch, how far the weights moved from their initial values (relative change, correlation, sd, step size), from the checkpoints; no GPU |
+| `activity.py` | Spike statistics across neurons (mean, sd, percentiles; used by `train.py`) and their plot from a `spikes.csv` or `activity.csv` |
+| `activity_over_training.py` | Validation only: activity per layer over training, re-run from a run's checkpoints without augmentation |
 | `polarity_balance.py` | ON vs OFF counts of the raw events and of the EvDownsampling input (from the training cache), per split and class |
 | `activity_profile.py` | Events per 500 ms bin of every training/validation recording: leading and trailing silences that trimming would remove |
 | `run.sh` | Run `train.py` in a new, timestamped experiment directory |
@@ -819,3 +823,20 @@ backwards and of the trial being written (`event_prop_compiler.py`, `neuron_rese
 `MAX_SPIKES` (6242) together; here the previous trial had 3700 spikes (offsets 4198 -> 1656)
 and the current one 2542 by t = 3975 ms. The run was not repeated, since fold 1 already
 rejects the idea: with fold 1 at -1.6, fold 2 would need a gain of +5.6 to reach a mean of +2.
+
+### Supervisor meeting of 26 Nov: analyses
+
+* `spikes.csv` of new runs also holds the sd and the 5th, 50th and 95th percentile across
+  neurons of each neuron's mean spike count (`activity.py`); older runs have the mean, the
+  maximum and the silent fraction only. `activity_over_training.py` recomputes all of them
+  for an older run from its checkpoints (validation recordings, no augmentation).
+* `weight_change.py` measures, per layer and epoch, how far the weights moved from their
+  initial values (it replaces the single correlation numbers quoted earlier).
+* `conv1_similarity.py` extends the conv1 comparison to several seeds, with two baselines:
+  our seeds against each other, and random Gaussian banks (the initialisation) against
+  theirs. The one-to-one matching alone makes the chance score positive.
+* Regulariser ablation (`configs/regulariser.json`, `full` settings, fold 1): the
+  `SpikeCount` strength is 5e-9 below and above a target of 100 spikes per neuron per 4 s
+  trial on every spiking layer. `reg_off` sets it to 0, `reg_weak` to 5e-10, on seeds 1
+  and 2 (controls: `full` seeds 1 and 2, 129.7 and 127.5). `smoke_reg_off` (2 epochs)
+  checks first that the activity neither dies nor overflows the spike ring.

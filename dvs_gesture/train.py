@@ -11,6 +11,7 @@ from ml_genn.callbacks import (Callback, Checkpoint, OptimiserParamSchedule, Spi
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
+from activity import FIELDS as ACTIVITY_FIELDS, activity_stats
 from data import (BETA, COUNT_LEVELS, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS,
                   VALIDATION_SUBJECTS, augment_spikes, augmentation_growth, count_level_spikes,
                   encode_recordings, input_channels, load_dataset, max_spikes_per_neuron,
@@ -198,10 +199,8 @@ def spike_recorders(layers, split, num_examples):
 
 def log_spike_counts(log, epoch, split, recordings, layers):
     for layer in layers:
-        counts = np.array(recordings[(split, layer.name)])  # (examples, neurons)
-        log.write(epoch=epoch, split=split, layer=layer.name,
-                  mean_per_neuron=counts.mean(), max_per_neuron=int(counts.max()),
-                  silent_fraction=np.mean(counts.sum(axis=0) == 0))
+        counts = recordings[(split, layer.name)]  # (examples, neurons)
+        log.write(epoch=epoch, split=split, layer=layer.name, **activity_stats(counts))
 
 
 def main():
@@ -407,8 +406,7 @@ def main():
 
     metrics_log = CSVLog("metrics.csv", ["epoch", "train_correct", "train_total", "train_loss",
                                          "val_correct", "val_total", "seconds", "lr"])
-    spikes_log = CSVLog("spikes.csv", ["epoch", "split", "layer", "mean_per_neuron",
-                                       "max_per_neuron", "silent_fraction"])
+    spikes_log = CSVLog("spikes.csv", ACTIVITY_FIELDS)
     limit_log = CSVLog("adjoint_limits.csv", ["epoch", "layer", "limit", "zero_fraction"])
     if args.lambda_epochs:
         lambda_log = CSVLog("lambda_trace.csv", [

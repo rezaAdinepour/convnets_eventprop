@@ -1,0 +1,16 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "runs": {
+    "smoke_reg_off": {"reg_strength": [0, 0], "seed": 1, "epochs": 2, "warmup_epochs": 1},
+    "reg_off_seed1": {"reg_strength": [0, 0], "seed": 1},
+    "reg_weak_seed1": {"reg_strength": [5e-10, 5e-10], "seed": 1},
+    "reg_off_seed2": {"reg_strength": [0, 0], "seed": 2},
+    "reg_weak_seed2": {"reg_strength": [5e-10, 5e-10], "seed": 2}
+  }
+}
