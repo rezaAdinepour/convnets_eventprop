@@ -9,6 +9,8 @@
   "runs": {
     "rec_0.1": {"recurrent_weight_sd": 0.1, "seed": 1},
     "rec_0.3": {"recurrent_weight_sd": 0.3, "seed": 1},
-    "rec_0.6": {"recurrent_weight_sd": 0.6, "seed": 1}
+    "rec_0.6": {"recurrent_weight_sd": 0.6, "seed": 1},
+    "rec_0.3_seed1": {"recurrent_weight_sd": 0.3, "seed": 1},
+    "rec_0.3_seed2": {"recurrent_weight_sd": 0.3, "seed": 2}
   }
 }

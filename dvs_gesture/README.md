@@ -747,3 +747,19 @@ that kind. The runs keep the `full` setup at batch 32, so `full` seeds 1-3 (129.
 127.4) are their controls. The initial sd is chosen from 2-epoch smoke runs of `rec_0.1`,
 `rec_0.3` and `rec_0.6` (seed 1) whose hidden activity and maximum spikes per neuron stay
 close to `full`'s (epoch 0: 128 mean; trained: 94 mean, 659 max).
+
+Smoke runs (2 epochs, 1 warmup epoch; `20261126_100327_smoke_rec_0.1`, `..._101149_smoke_rec_0.3`,
+`..._101336_smoke_rec_0.6`), hidden spikes per neuron per gesture, train mean / max:
+
+| sd | Epoch 0 | Epoch 1 | Validation epoch 0, 1 |
+|---|---|---|---|
+| 0.1 | 120 / 3478 | 80 / 1754 | 30, 58 |
+| 0.3 | 119 / 3665 | 80 / 1808 | 34, 58 |
+| 0.6 | 119 / 3909 | 76 / 1852 | 31, 49 |
+
+The convolutional layers are the same for all three (epoch 1 train conv1/conv2/conv3 39/49/60),
+so at initialisation the recurrent input is small against the feedforward input, and only the
+hidden maximum grows with sd. `full` seed 1 reached a hidden maximum of 3141 without
+overflowing the ring. The runs use sd 0.3 (`rec_0.3_seed1`, `rec_0.3_seed2`), which leaves room
+for the recurrent weights to grow during training without starting at the largest maximum.
+Epochs take about twice as long as `full`'s at the same epoch (46 s against 19 s at epoch 1).
