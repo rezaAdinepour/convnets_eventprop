@@ -894,3 +894,32 @@ Without `SpikeCount`, the hidden layer fires less after one epoch (validation 33
 spikes per neuron with the regulariser, train 70 against 128) and the adjoint limits are
 about 10x smaller (less backward drive), but learning starts faster (validation 43 and 70
 after epochs 0 and 1, against 12 and 35 for `full`). Nothing overflowed.
+
+#### conv1 similarity with baselines (`dvs_gesture_conv1_similarity_v2`)
+
+Mean weight per polarity in units of the bank's sd: theirs OFF +0.32, ON +0.13; ours OFF
++0.41 to +0.57, ON -0.02 to -0.41; initial about 0. Both networks use the Tonic polarity as
+the channel index, so the channels correspond. Our training makes OFF events excitatory and
+ON events weakly inhibitory, whereas both are excitatory in theirs.
+
+| Mean matched cosine | Raw weights | Spatial pattern (mean per filter and polarity removed) |
+|---|---|---|
+| Ours vs theirs (6 runs) | 0.224 (0.19-0.26) | 0.200 (0.16-0.22) |
+| Random bank vs theirs (chance, 95th percentile) | 0.201 (0.235) | 0.211 (0.244) |
+| Ours vs ours, different seeds (12 pairs) | 0.486 (0.41-0.61) | 0.416 (0.34-0.53) |
+| Random vs random (chance, 95th percentile) | 0.218 (0.247) | 0.223 (0.251) |
+| Ours vs ours, same seed (final_aug vs `full`) | 0.920 | 0.928 |
+
+* The slight raw similarity of `full` seeds 1 and 2 to theirs (0.245 and 0.260) comes from
+  the shared positive OFF mean and disappears in the spatial pattern; there every run is at
+  or below chance (two runs below, 0.16, probably because smooth filters offer fewer
+  coincidental matches than white noise).
+* Our runs from different seeds share spatial structure far above chance (all 12 pairs above
+  the 95th percentile), more so after 200 epochs on all training subjects (final_aug,
+  0.52-0.53) than after 100 epochs (`full`, 0.34). Training thus converges to a consistent
+  set of conv1 features that is unrelated to the surrogate-gradient model's.
+* Each run stays close to its own initial weights (`full` seed 1 vs its initial bank:
+  0.90 spatial; after 200 epochs 0.69), consistent with a correlation of 0.85 with the
+  initial weights.
+* Different encodings (EvDownsampling vs 1 ms frames), neuron models and training rules may
+  explain the difference; chance-level similarity says nothing about which filters are better.
