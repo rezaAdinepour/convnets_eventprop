@@ -6,13 +6,10 @@
   "aug_shift_px": 4,
   "aug_zoom": [0.8, 1.2],
   "aug_rotate_deg": 10,
-  "batch_size": 16,
-  "max_spikes": 12484,
   "runs": {
-    "smoke_target_400_b16": {"reg_target": 400, "seed": 1, "epochs": 2, "warmup_epochs": 1},
     "target_200_seed1": {"reg_target": 200, "seed": 1},
-    "target_400_seed1": {"reg_target": 400, "seed": 1},
     "target_200_seed2": {"reg_target": 200, "seed": 2},
-    "target_400_seed2": {"reg_target": 400, "seed": 2}
+    "target_400_b16_seed1": {"reg_target": 400, "seed": 1, "batch_size": 16, "max_spikes": 12484},
+    "target_400_b16_seed2": {"reg_target": 400, "seed": 2, "batch_size": 16, "max_spikes": 12484}
   }
 }

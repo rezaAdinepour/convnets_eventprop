@@ -957,6 +957,6 @@ Validation spikes per neuron per trial at epoch 99 (mean +- sd across neurons):
 Jamie suggested the target of 100 spikes per trial (25 Hz) may be too low for DVS Gesture.
 At batch 32 a target of 400 overflows the hidden spike ring in epoch 0 (neuron 136, smoke
 run `20261126_222701_smoke_target_400`); even `full` reaches 3141 spikes in one trial in
-epoch 1, half of `MAX_SPIKES`. The runs therefore use batch 16 with `--max-spikes 12484`
-(the same memory), against the batch-16 controls `b16_seed1` and `b16_seed2` (124.7 and
-132.2, `configs/counts.json`).
+epoch 1, half of `MAX_SPIKES`, and doubling the ring at batch 32 does not fit on the GPU.
+Target 200 runs at batch 32 against `full`. The 400 runs, if needed, use batch 16 with
+`--max-spikes 12484` (the same memory), against `b16_seed1` and `b16_seed2` (124.7 and 132.2).
