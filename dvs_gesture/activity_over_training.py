@@ -14,7 +14,7 @@ from ml_genn.callbacks import SpikeRecorder
 from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
-from activity import FIELDS, activity_stats, describe_run, plot_activity, read_activity
+from activity import SPLITS, FIELDS, activity_stats, model_kind, plot_activity, read_activity
 from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, VALIDATION_SUBJECTS, encode_recordings,
                   input_channels, load_dataset, split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
@@ -95,9 +95,11 @@ def main():
                           f"p5-p95 {stats['p5_per_neuron']:6.1f}-{stats['p95_per_neuron']:7.1f} "
                           f"silent {stats['silent_fraction']:.3f}")
 
-    plot_activity(read_activity("activity.csv"), work_dir / "activity.png",
-                  config["example_timesteps"], describe_run(config, args.split),
-                  config.get("reg_target"), args.split)
+    split = args.split[0]
+    plot_activity({f"Seed {config['seed']}": read_activity("activity.csv")},
+                  work_dir / "activity.png", config["example_timesteps"],
+                  f"Spike rate per layer, {model_kind(config)}, {SPLITS[split]}",
+                  config.get("reg_target"), split)
     (work_dir / "source.json").write_text(json.dumps(
         {"run_dir": str(run_dir), "epochs": epochs, "splits": args.split}, indent=2))
 
