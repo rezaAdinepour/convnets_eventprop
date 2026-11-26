@@ -145,6 +145,7 @@ def main():
 
     theirs = reshape_conv_weight(load_state_dict(args.reference)["0.weight"])
     banks, seeds = {PAPER: theirs}, {PAPER: None}
+    initial = None
     for d in map(train_dir, args.run_dirs):
         config = load_config(d)
         epoch = config["epochs"] - 1 if args.epoch is None else args.epoch
@@ -153,10 +154,11 @@ def main():
             parser.error(f"Two runs are both '{name}'")
         banks[name] = np.load(d / "checkpoints" / f"{epoch}-conv1-weight.npy").reshape(theirs.shape)
         seeds[name] = config["seed"]
-        if len(banks) == 2:
-            initial = np.load(d / "checkpoints" / "initial-conv1-weight.npy")
-            banks[initial_label(config)] = initial.reshape(theirs.shape)
-            seeds[initial_label(config)] = config["seed"]
+        if initial is None:
+            initial = (initial_label(config), config["seed"],
+                       np.load(d / "checkpoints" / "initial-conv1-weight.npy"))
+    name, seed, w = initial
+    banks[name], seeds[name] = w.reshape(theirs.shape), seed
     names = list(banks)
     ours = [n for n in names if n != PAPER and not n.startswith("Initial")]
 
