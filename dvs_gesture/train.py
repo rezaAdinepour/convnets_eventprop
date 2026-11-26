@@ -12,8 +12,9 @@ from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 
 from data import (BETA, COUNT_LEVELS, ENCODINGS, TAU_ACCUMULATOR_MS, TAU_THETA_MS,
-                  augment_spikes, augmentation_growth, count_level_spikes, encode_recordings,
-                  input_channels, load_dataset, max_spikes_per_neuron, split_train_validation)
+                  VALIDATION_SUBJECTS, augment_spikes, augmentation_growth, count_level_spikes,
+                  encode_recordings, input_channels, load_dataset, max_spikes_per_neuron,
+                  split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, DELAY_LEARNING_RATE, GRAD_LIMIT, INIT_DELAY_MS,
                    LAYER_NAMES, DOWNSAMPLING, LEARNING_RATE, MAX_DELAY_MS, MAX_SPIKES,
                    REG_STRENGTH, REG_TARGET, SEED, SPIKING_WEIGHT_SD, SYNAPSES, READOUTS,
@@ -236,6 +237,8 @@ def main():
                         help="Seed for weight initialisation and shuffling (must not be 0)")
     parser.add_argument("--train-all", action="store_true",
                         help="Train on all official training subjects, without validation")
+    parser.add_argument("--val-subjects", type=int, nargs="+", default=list(VALIDATION_SUBJECTS),
+                        help="Training subjects held out for validation")
     parser.add_argument("--lambda-epochs", type=int, nargs="*", default=[],
                         help="Epochs at which to record lambda_V of one training example")
     parser.add_argument("--delay-layers", nargs="*", choices=LAYER_NAMES, default=[],
@@ -323,7 +326,7 @@ def main():
         print(f"Config: {config_path}" + (f", run {args.run}" if args.run else ""))
 
     dataset = load_dataset(args.data_root.resolve(), train=True)
-    train_idx, val_idx = split_train_validation(dataset)
+    train_idx, val_idx = split_train_validation(dataset, args.val_subjects)
     cache_dir = args.cache_dir.resolve() if args.cache_dir else None
     evd_params = (args.evd_tau_theta_ms, args.evd_tau_accumulator_ms, args.evd_beta)
     train_x, train_y, train_len = encode_recordings(dataset, train_idx, args.encoding,
@@ -344,7 +347,8 @@ def main():
     input_buffer = args.batch_size * calc_max_spikes(train_x + val_x) * growth
     peak_input = max_spikes_per_neuron(train_x + val_x)
     train_spikes = sum(len(s.spike_times) for s in train_x)
-    print(f"Train: {len(train_x)}, validation: {len(val_x)}, encoding: {args.encoding}")
+    print(f"Train: {len(train_x)}, validation: {len(val_x)} (subjects "
+          f"{', '.join(map(str, args.val_subjects))}), encoding: {args.encoding}")
     print(f"Trial: {example_timesteps} ms, input buffer: {input_buffer} spikes, "
           f"busiest input neuron: {peak_input} spikes per gesture")
     if args.encoding == "counts":
@@ -371,6 +375,7 @@ def main():
         input_buffer=input_buffer, batch_size=args.batch_size, max_spikes=MAX_SPIKES,
         grad_limit=args.grad_limit, reg_target=args.reg_target,
         reg_strength=args.reg_strength, seed=args.seed, train_all=args.train_all,
+        val_subjects=args.val_subjects,
         lambda_epochs=args.lambda_epochs, delay_layers=args.delay_layers,
         max_delay_ms=args.max_delay_ms, init_delay_ms=args.init_delay_ms,
         delay_lr=args.delay_lr, lr=args.lr, output_lr_factor=args.output_lr_factor,

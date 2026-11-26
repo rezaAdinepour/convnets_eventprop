@@ -48,11 +48,14 @@ def load_dataset(data_root: Path, train: bool):
     return DVSGesture(save_to=str(data_root), train=train)
 
 
-def split_train_validation(dataset):
-    """Return training and validation indices, sorted by file path."""
+def split_train_validation(dataset, subjects=VALIDATION_SUBJECTS):
+    """Return training and validation (recordings of ``subjects``) indices, sorted by file path."""
+    missing = set(subjects) - set(dataset.users)
+    if missing:
+        raise ValueError(f"No training recordings of subjects {sorted(missing)}")
     order = sorted(range(len(dataset)), key=lambda i: dataset.data[i])
-    train = [i for i in order if dataset.users[i] not in VALIDATION_SUBJECTS]
-    validation = [i for i in order if dataset.users[i] in VALIDATION_SUBJECTS]
+    train = [i for i in order if dataset.users[i] not in subjects]
+    validation = [i for i in order if dataset.users[i] in subjects]
     return train, validation
 
 

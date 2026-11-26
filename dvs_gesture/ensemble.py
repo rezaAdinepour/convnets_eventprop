@@ -18,15 +18,15 @@ import numpy as np
 from ml_genn.utils.data import calc_max_spikes
 from tonic.datasets import DVSGesture
 
-from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, encode_recordings, input_channels,
-                  load_dataset, split_train_validation)
+from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, VALIDATION_SUBJECTS, encode_recordings,
+                  input_channels, load_dataset, split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
                    compile_for_inference)
 
 # Settings of older runs that train.py did not save yet
 DEFAULTS = dict(channels=list(CHANNELS), readout="avg_var_exp_weight", synapse="exponential",
                 subtract_reset=False, output_lr_factor=1.0, count_levels=COUNT_LEVELS,
-                recurrent_weight_sd=0.0)
+                recurrent_weight_sd=0.0, val_subjects=list(VALIDATION_SUBJECTS))
 PER_RUN = ("seed", "run", "config")
 
 
@@ -84,7 +84,7 @@ def main():
         raise SystemExit(f"{work_dir / 'readouts.npz'} exists; choose a new work_dir")
 
     dataset = load_dataset(args.data_root.resolve(), train=True)
-    _, indices = split_train_validation(dataset)
+    _, indices = split_train_validation(dataset, config["val_subjects"])
     x, y, _ = encode_recordings(dataset, indices, config["encoding"],
                                 trial_ms=config.get("trial_ms"), cache_dir=config.get("cache_dir"),
                                 crop_ms=config.get("crop_ms"),

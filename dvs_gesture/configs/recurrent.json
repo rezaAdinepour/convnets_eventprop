@@ -11,6 +11,9 @@
     "rec_0.3": {"recurrent_weight_sd": 0.3, "seed": 1},
     "rec_0.6": {"recurrent_weight_sd": 0.6, "seed": 1},
     "rec_0.3_seed1": {"recurrent_weight_sd": 0.3, "seed": 1},
-    "rec_0.3_seed2": {"recurrent_weight_sd": 0.3, "seed": 2}
+    "rec_0.3_seed2": {"recurrent_weight_sd": 0.3, "seed": 2},
+    "full_fold2_seed1": {"val_subjects": [1, 2, 3], "seed": 1},
+    "full_fold2_seed2": {"val_subjects": [1, 2, 3], "seed": 2},
+    "rec_0.3_fold2_seed1": {"recurrent_weight_sd": 0.3, "val_subjects": [1, 2, 3], "seed": 1}
   }
 }

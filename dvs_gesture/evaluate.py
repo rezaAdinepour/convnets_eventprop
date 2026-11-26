@@ -9,9 +9,8 @@ from ml_genn.serialisers import Numpy
 from ml_genn.utils.data import calc_max_spikes
 from tonic.datasets import DVSGesture
 
-from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, NUM_CLASSES, encode_recordings,
-                  input_channels, load_dataset,
-                  split_train_validation)
+from data import (COUNT_LEVELS, EVDOWNSAMPLING_PARAMS, NUM_CLASSES, VALIDATION_SUBJECTS,
+                  encode_recordings, input_channels, load_dataset, split_train_validation)
 from model import (BATCH_SIZE, CHANNELS, MAX_DELAY_MS, TAU_MEM_MS, TAU_SYN_MS, build_network,
                    compile_for_inference, delay_connections)
 
@@ -45,7 +44,8 @@ def main():
         indices = list(range(len(dataset)))
     else:
         dataset = load_dataset(args.data_root.resolve(), train=True)
-        _, indices = split_train_validation(dataset)
+        _, indices = split_train_validation(
+            dataset, config.get("val_subjects", VALIDATION_SUBJECTS))
     x, y, lengths = encode_recordings(dataset, indices, config["encoding"],
                                       trial_ms=config.get("trial_ms"),
                                       cache_dir=config.get("cache_dir"),

@@ -29,6 +29,8 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 * Official train set split by subject: subjects 1-20 for training (934 recordings),
   21-23 for validation (143). The official test set (subjects 24-29, 264) is only
   used by `evaluate.py --test`.
+* `val_subjects` (`--val-subjects`) picks other validation subjects. Fold 2 is subjects 1-3
+  (14 sessions, 154 recordings; training on subjects 4-23, 923 recordings).
 * Denoise (10 ms), downsample 128x128 to 32x32, add a one-pixel silent border (34x34x2).
 * Whole recordings at 1 ms bins. By default all trials last as long as the longest
   recording (18,454 ms) and shorter recordings are followed by silence.
@@ -763,3 +765,22 @@ hidden maximum grows with sd. `full` seed 1 reached a hidden maximum of 3141 wit
 overflowing the ring. The runs use sd 0.3 (`rec_0.3_seed1`, `rec_0.3_seed2`), which leaves room
 for the recurrent weights to grow during training without starting at the largest maximum.
 Epochs take about twice as long as `full`'s at the same epoch (46 s against 19 s at epoch 1).
+
+### Validation folds
+
+The default validation set, subjects 21-23, is balanced (13 recordings of each class, one
+per session and class), but small and easy:
+
+* One recording is 0.7 points; at 90% accuracy the 95% binomial interval is about +-5 points,
+  and seeds differ by 3-5 recordings.
+* Three subjects only, which are easier than the test subjects: `full_200` reaches 93.7% on
+  validation but 84.2% on the test set (stage 6b), and air guitar is 13/13 on validation but
+  56% on the test set.
+* Every earlier choice was made on these 143 recordings, so their accuracy is optimistic.
+
+Fold 2 (subjects 1-3, chosen before any result as the first three subjects, mirroring the
+last three) adds 3 subjects and 154 recordings, so that both folds together hold 6 subjects
+and 297 recordings, about the size of the test set (264). `full_fold2_seed1/2` are its
+controls. From now on an idea is accepted when its mean paired gain over fold 1 (seeds 1, 2)
+and fold 2 (seed 1, and seed 2 when it is close) is at least +2 recordings per fold, i.e.
+about 1.4 points. Fold 2 needs a new encoding cache (the cache key holds the recordings).
