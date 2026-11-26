@@ -924,3 +924,30 @@ ON events weakly inhibitory, whereas both are excitatory in theirs.
   initial weights.
 * Different encodings (EvDownsampling vs 1 ms frames), neuron models and training rules may
   explain the difference; chance-level similarity says nothing about which filters are better.
+
+#### Regulariser ablation: results (`configs/regulariser.json`, fold 1, 100 epochs)
+
+| Run | Strength | Mean val. correct, last 20 epochs (of 143) | Change vs `full` |
+|---|---|---|---|
+| `full` seed 1 | 5e-9 | 129.7 (90.7%) | |
+| `reg_weak_seed1` | 5e-10 | 126.5 (88.5%) | -3.2 |
+| `reg_off_seed1` | 0 | 120.0 (83.9%) | -9.7 |
+| `full` seed 2 | 5e-9 | 127.5 (89.1%) | |
+| `reg_weak_seed2` | 5e-10 | 128.4 (89.8%) | +0.9 |
+| `reg_off_seed2` | 0 | 131.2 (91.7%) | +3.7 |
+
+Validation spikes per neuron per trial at epoch 99 (mean +- sd across neurons):
+
+| Run | conv1 | conv2 | conv3 | hidden (5th-95th percentile) |
+|---|---|---|---|---|
+| `full` seeds 1-2 | 42 | 52 | 78 | 94 |
+| `reg_weak` seeds 1-2 | 42 +- 42 | 51-52 +- 43 | 74-75 +- 31 | 97-98 +- 20-22 (72-140) |
+| `reg_off` seeds 1-2 | 13-16 +- 29-35 | 8-10 +- 16-24 | 14-18 +- 21-38 | 96-100 +- 96 (1-307) |
+
+* Neither change helps on average (off -3.0, weak -1.2), and the two seeds disagree by up to
+  13 recordings, so 2 seeds cannot resolve differences of a few recordings.
+* A tenth of the strength gives the same activity as `full`, so 5e-10 is already enough to
+  set the rates. Without the regulariser the conv layers fire 3-5x less and the hidden mean
+  stays near 100 by itself, but with a very broad spread (sd equal to the mean).
+* The hidden layer is therefore not held near 100 against its will: its mean ends there
+  anyway. What the regulariser does is narrow the spread and keep the conv layers active.
