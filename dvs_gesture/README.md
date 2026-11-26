@@ -720,3 +720,18 @@ for every population, the input included (`_build_in_hid_neuron_model` in mlGeNN
 therefore use batch 16, which halves every ring (4 levels then need about as much memory as
 2 levels at batch 32), with a batch-16 control of the EvDownsampling `full` setup for each
 seed: `b16_seed1`, `counts_4_b16_seed1`, `b16_seed2`, `counts_4_b16_seed2`.
+
+Results (last-20-epoch mean validation correct of 143, 100 epochs):
+
+| Seed | `b16` (EvDownsampling) | `counts_4_b16` | Difference | `full` at batch 32 |
+|---|---|---|---|---|
+| 1 | 124.7 (best 129 @50) | 121.5 (best 124 @70) | -3.2 | 129.7 |
+| 2 | 132.2 (best 133 @75) | 115.0 (best 117 @80) | -17.2 | 127.5 |
+| Mean | 128.5 | 118.3 | -10.2 | 128.6 |
+
+Count input is clearly worse, so the runs keep EvDownsampling. Training accuracy and loss are the
+same as for the controls (76-79% augmented train accuracy at epoch 99), so count input
+generalises worse rather than learning slower. Final activity is the same as for the controls
+(conv1/conv2/conv3/hidden 42/51/71/90 against 40/53/77/94 spikes per neuron per gesture).
+Batch 16 does not change accuracy: -5.0 and +4.7 against `full` at batch 32 for seeds 1 and 2
+(`b16_seed2`, 132.2, is the best single run so far, within the seed spread).
