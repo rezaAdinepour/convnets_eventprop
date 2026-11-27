@@ -981,3 +981,22 @@ settings, unchanged, with seeds 4-6. The ensemble (mean softmax over seeds) is t
 that helped on validation (+2.1 points, `full` seeds 1-3). Fixed before training, all at epoch
 199 and without SWA: seeds 4-6 alone, the ensemble of seeds 4-6, and the ensemble of seeds 1-6
 (`ensemble.py --test`).
+
+| Model | Test (of 264) |
+|---|---|
+| seed 4 (`20261127_093713_final_aug_seed4`) | 222 (84.1%) |
+| seed 5 (`20261127_124148_final_aug_seed5`) | 224 (84.8%) |
+| seed 6 (`20261127_154848_final_aug_seed6`) | 216 (81.8%) |
+| Seeds 4-6, mean (sd) | 220.7 (4.2), 83.6% (1.6) |
+| Seeds 1-6, mean (sd) | 221.5 (3.3), 83.9% (1.3) |
+| Ensemble of seeds 4-6 | 228 (86.4%) |
+| Ensemble of seeds 1-6 | **233 (88.3%)** |
+
+Logs: `Experiments/test_ensemble_seeds4-6.log`, `test_ensemble_seeds1-6.log`. Seeds 1-3
+reproduce their stage 6b results (224, 224, 219). This is the third evaluation of the test
+set with these settings (stage 6, 6b, 6c).
+
+* The new seeds confirm stage 6b: a single model gets 83.9% +- 1.3 over 6 seeds.
+* The ensemble adds 2.8 points with 3 models and 4.4 with 6, more than on validation (+2.1).
+* Hand clapping, air drums and air guitar stay the weakest classes in the 6-seed ensemble
+  (18, 16, 13 of 24), and subject 25 the hardest subject (15 of 22).
