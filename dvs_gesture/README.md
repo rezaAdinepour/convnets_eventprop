@@ -960,3 +960,16 @@ run `20261126_222701_smoke_target_400`); even `full` reaches 3141 spikes in one 
 epoch 1, half of `MAX_SPIKES`, and doubling the ring at batch 32 does not fit on the GPU.
 Target 200 runs at batch 32 against `full`. The 400 runs, if needed, use batch 16 with
 `--max-spikes 12484` (the same memory), against `b16_seed1` and `b16_seed2` (124.7 and 132.2).
+
+Results (fold 1, 100 epochs, batch 32):
+
+| Run | Last-20 val. (of 143) | Change vs `full` | Final train |
+|---|---|---|---|
+| `target_200_seed1` | 125.0 (87.4%) | -4.7 (-3.3 points) | 654/934 (70.0%) |
+| `target_200_seed2` | 105.3 (73.6%) | -22.2 (-15.5 points) | 594/934 (63.6%) |
+
+Every layer fires about twice as much as in `full` (validation, epoch 99: 84 / 97 / 157 /
+188 spikes per neuron per trial; hidden sd 29-31), and training accuracy drops as well, so
+the higher target makes the task harder to learn rather than overfit. The largest hidden
+count in one training trial was 3668 (epoch 1), close to the ring limit. Target 400 was not
+run.
