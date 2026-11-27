@@ -1,6 +1,6 @@
-"""Validation accuracy of single runs, their weight averages (SWA) and seed ensembles.
+"""Validation (or test) accuracy of single runs, their weight averages (SWA) and seed ensembles.
 
-    python ensemble.py DATA_ROOT WORK_DIR RUN_DIR [RUN_DIR ...]
+    python ensemble.py DATA_ROOT WORK_DIR RUN_DIR [RUN_DIR ...] [--test]
 """
 import argparse
 import csv
@@ -24,10 +24,11 @@ DEFAULTS = dict(channels=list(CHANNELS), readout="avg_var_exp_weight", synapse="
 PER_RUN = ("seed", "run", "config")
 
 
-def load_run_config(run_dir):
+def load_run_config(run_dir, test):
     config = {**DEFAULTS, **json.loads((run_dir / "run_config.json").read_text())}
-    if config.get("train_all"):
-        raise SystemExit(f"{run_dir} trained on the validation subjects")
+    if bool(config.get("train_all")) != test:
+        raise SystemExit(f"{run_dir}: only final (train_all) runs go on the test set, "
+                         "and only with --test")
     if config.get("delay_layers"):
         raise SystemExit(f"{run_dir} learns delays, which this script does not load")
     return config
@@ -58,11 +59,12 @@ def main():
     parser.add_argument("--epoch", type=int, help="default: last epoch")
     parser.add_argument("--swa-epochs", type=int, default=20,
                         help="0: no SWA")
+    parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
 
     run_dirs = [d.resolve() / "train" if (d / "train" / "run_config.json").exists()
                 else d.resolve() for d in args.run_dirs]
-    configs = [load_run_config(d) for d in run_dirs]
+    configs = [load_run_config(d, args.test) for d in run_dirs]
     shared = [{k: v for k, v in c.items() if k not in PER_RUN} for c in configs]
     for d, s in zip(run_dirs[1:], shared[1:]):
         different = sorted(k for k in set(s) | set(shared[0]) if s.get(k) != shared[0].get(k))
@@ -77,8 +79,12 @@ def main():
     if (work_dir / "readouts.npz").exists():
         raise SystemExit(f"{work_dir / 'readouts.npz'} exists; choose a new work_dir")
 
-    dataset = load_dataset(args.data_root.resolve(), train=True)
-    _, indices = split_train_validation(dataset, config["val_subjects"])
+    if args.test:
+        dataset = load_dataset(args.data_root.resolve(), train=False)
+        indices = list(range(len(dataset)))
+    else:
+        dataset = load_dataset(args.data_root.resolve(), train=True)
+        _, indices = split_train_validation(dataset, config["val_subjects"])
     x, y, _ = encode_recordings(dataset, indices, config["encoding"],
                                 trial_ms=config.get("trial_ms"), cache_dir=config.get("cache_dir"),
                                 crop_ms=config.get("crop_ms"),
@@ -114,8 +120,8 @@ def main():
         name = f"seed{c['seed']}"
         readouts[name] = predict(mean_weights(d, connections, [epoch]))
         correct = (readouts[name].argmax(axis=1) == y).sum()
-        print(f"{d.parent.name}, epoch {epoch}: {correct}/{len(y)} "
-              f"(logged during training: {logged_validation(d, epoch)})")
+        logged = "" if args.test else f" (logged during training: {logged_validation(d, epoch)})"
+        print(f"{d.parent.name}, epoch {epoch}: {correct}/{len(y)}{logged}")
         if args.swa_epochs > 0:
             readouts[f"{name}_swa"] = predict(mean_weights(d, connections, swa_epochs))
     np.savez(work_dir / "readouts.npz", y=y, subjects=subjects, indices=np.array(indices),

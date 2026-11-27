@@ -1,0 +1,16 @@
+{
+  "base": "base.json",
+  "lr": 0.006,
+  "tau_mem_ms": 50.0,
+  "spiking_weight_sd": 0.9375,
+  "aug_shift_px": 4,
+  "aug_zoom": [0.8, 1.2],
+  "aug_rotate_deg": 10,
+  "epochs": 200,
+  "train_all": true,
+  "runs": {
+    "final_aug_seed4": {"seed": 4},
+    "final_aug_seed5": {"seed": 5},
+    "final_aug_seed6": {"seed": 6}
+  }
+}

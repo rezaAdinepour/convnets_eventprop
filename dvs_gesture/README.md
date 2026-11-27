@@ -17,7 +17,7 @@ PyGeNN 5.5.0, Tonic 1.5.0 and EvDownsampling (`anindyaghosh/EvDownsampling`) at
 | `model.py` | Network definition and the training / inference compilers |
 | `train.py` | Training loop with per-epoch CSV logs and checkpoints |
 | `evaluate.py` | Reload the best epoch and evaluate validation (or, once, the test set) |
-| `ensemble.py` | Validation only: per class and subject accuracy of several runs (e.g. seeds) at one epoch, of their weights averaged over the last epochs (SWA), and of the ensembles that average their softmax outputs |
+| `ensemble.py` | Per class and subject accuracy of several runs (e.g. seeds) at one epoch, of their weights averaged over the last epochs (SWA), and of the ensembles that average their softmax outputs; `--test` for final runs |
 | `plot_training.py` | Plot validation accuracy and training loss of one or more runs |
 | `compare_conv1_filters.py` | Plot a run's conv1 filters next to those of the Arfa et al. snnTorch checkpoint (read without PyTorch), matched one-to-one by cosine similarity |
 | `conv1_similarity.py` | conv1 filters of several runs against the Arfa et al. checkpoint, each other (seed vs seed) and chance (random Gaussian banks), by matched cosine similarity; no GPU |
@@ -973,3 +973,11 @@ Every layer fires about twice as much as in `full` (validation, epoch 99: 84 / 9
 the higher target makes the task harder to learn rather than overfit. The largest hidden
 count in one training trial was 3668 (epoch 1), close to the ring limit. Target 400 was not
 run.
+
+## Stage 6c: three more final models and a seed ensemble (`configs/final_test.json`)
+
+Jamie asked for the current best model on the full training set and the test set. Stage 6b
+settings, unchanged, with seeds 4-6. The ensemble (mean softmax over seeds) is the only change
+that helped on validation (+2.1 points, `full` seeds 1-3). Fixed before training, all at epoch
+199 and without SWA: seeds 4-6 alone, the ensemble of seeds 4-6, and the ensemble of seeds 1-6
+(`ensemble.py --test`).
